@@ -23,6 +23,7 @@ _testmain.go
 *.exe
 *.test
 *.prof
+build/*
 
 # ignoring environment variable files
 *.env
