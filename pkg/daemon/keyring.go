@@ -6,6 +6,11 @@ import (
 	"net/url"
 )
 
+type VpsRootUser struct {
+	Password string
+	Pubkey   string
+}
+
 type BearerAuth struct {
 	Secret string // Likely would be the API key for the API
 }
@@ -15,6 +20,20 @@ Format a bearer auth payload according to RFC 6750
 */
 func (b BearerAuth) Prepare() string {
 	return fmt.Sprintf("Bearer %s", b.Secret)
+}
+
+/*
+Return the 'public' identifier, which for bearer auth the closest is going to be the auth type
+*/
+func (b BearerAuth) GetPublic() string {
+	return "Bearer"
+}
+
+/*
+Return the private data for this auth type
+*/
+func (b BearerAuth) GetSecret() string {
+	return b.Secret
 }
 
 type BasicAuth struct {
@@ -28,6 +47,20 @@ Encode a basic auth payload according to RFC 7617
 func (b BasicAuth) Prepare() string {
 	encodedcreds := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", b.Username, b.Password)))
 	return fmt.Sprintf("Basic %s", encodedcreds)
+}
+
+/*
+Return the 'public' identifier, which for basic auth it will return the username
+*/
+func (b BasicAuth) GetPublic() string {
+	return b.Password
+}
+
+/*
+Return the private data for this auth type
+*/
+func (b BasicAuth) GetSecret() string {
+	return b.Password
 }
 
 type ClientCredentials struct {
@@ -47,8 +80,19 @@ func (c ClientCredentials) Prepare() string {
 
 }
 
+// return the client ID
+func (c ClientCredentials) GetPublic() string {
+	return c.ClientId
+}
+
+// Return the Client Secret
+func (c ClientCredentials) GetSecret() string {
+	return c.ClientSecret
+}
+
 type ApiKeyRing struct {
-	Keys map[string]Key // hashmap with the keys in the keyring. Protected with getters and setters
+	Rungs []DaemonKeyRing
+	Keys  map[string]Key // hashmap with the keys in the keyring. Protected with getters and setters
 }
 
 /*
@@ -56,14 +100,22 @@ Retrieve a keyring from the daemon keyring
 
 	:param name: the name of the keyring. e.g., 'LINODE', or 'OPENWRT'
 */
-func (a ApiKeyRing) GetKey(name string) (Key, error) {
+func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 	var key Key
 	key, ok := a.Keys[name]
-	if !ok {
-		return key, &KeyNotFound{Name: name}
+	if ok {
+		return key, nil
 	}
-	return key, nil
-
+	if len(a.Rungs) > 0 {
+		for i := range a.Rungs {
+			key, err := a.Rungs[i].GetKey(name)
+			if err == nil {
+				a.AddKey(name, key)
+				return key, nil
+			}
+		}
+	}
+	return key, &KeyNotFound{Name: name}
 }
 
 /*
@@ -73,8 +125,8 @@ Add a key to the daemon keyring
 	:param key: the Key struct to add to the keyring
 */
 func (a *ApiKeyRing) AddKey(name string, key Key) error {
-	_, err := a.GetKey(name)
-	if err == nil {
+	_, ok := a.Keys[name]
+	if ok {
 		return &KeyExists{Name: name}
 	}
 	a.Keys[name] = key
@@ -96,6 +148,18 @@ func (a *ApiKeyRing) RemoveKey(name string) error {
 }
 
 /*
+Create a new daemon keyring. Passing additional implementers of the DaemonKeyRing will
+allow the GetKey() method on the toplevel keyring to search all subsequent keyrings for a match.
+*/
+func NewKeyRing() *ApiKeyRing {
+	return &ApiKeyRing{
+		Keys:  map[string]Key{},
+		Rungs: []DaemonKeyRing{},
+	}
+
+}
+
+/*
 
 ######################
 ##### INTERFACES #####
@@ -113,6 +177,8 @@ type Key interface {
 	// This function is supposed to return the payload for the given key type according to its RFC
 	// i.e. if the 'type' is Bearer, then it returns a string with 'Bearer tokencode123456xyz'
 	Prepare() string
+	GetPublic() string // Get the public identifier of the key, i.e. the username, or client id, etc.
+	GetSecret() string // Get the private/secret data, i.e. the password, API key, client secret, etc
 }
 
 /*
