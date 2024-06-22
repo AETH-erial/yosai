@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
@@ -44,6 +45,7 @@ func main() {
 	// internal cache for that key, and then it will attempt to find that key in
 	// each rung that it has on its keyring
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
+	lnclient := linode.LinodeConnection{Client: &http.Client{}}
 
 	if os.Args[1] == Key {
 		method := os.Args[2]
@@ -54,11 +56,30 @@ func main() {
 
 		}
 	}
-
-	// testkey is the name of a key i created in my dev hashicorp vault, to show that you
-	// can get a key from a child keyring via using the top level keyring.GetKey() method
-	fmt.Println(apikeyring.GetKey("testkey"))
-	// Grabbing a top level key from the parent keyring
-	fmt.Println(apikeyring.GetKey(keytags.LINODE_API_KEYNAME))
-
+	if os.Args[1] == Cloud {
+		method := os.Args[2]
+		switch method {
+		case "show":
+			server, err := lnclient.GetLinode(apikeyring, os.Args[3])
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("%+v\n", server)
+			os.Exit(0)
+		case "list":
+			all, err := lnclient.ListLinodes(apikeyring)
+			if err != nil {
+				log.Fatal(err)
+			}
+			for i := range all.Data {
+				fmt.Printf("ID: %v\n", all.Data[i].Id)
+			}
+			os.Exit(0)
+		case "rm":
+			err := lnclient.DeleteLinode(apikeyring, os.Args[3])
+			if err != nil {
+				log.Fatalf("Couldnt delete linode: %v. Error: %s", os.Args[3], err)
+			}
+		}
+	}
 }

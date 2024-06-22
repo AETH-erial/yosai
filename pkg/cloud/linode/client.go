@@ -19,8 +19,12 @@ const LinodeApiVers = "v4"
 const LinodeRegions = "regions"
 const LinodeTypes = "linode/types"
 
+type GetAllLinodes struct {
+	Data []GetLinodeResponse `json:"data"`
+}
+
 type GetLinodeResponse struct {
-	Id      string   `json:"id"`
+	Id      int      `json:"id"`
 	Ipv4    []string `json:"ipv4"`
 	Label   string   `json:"label"`
 	Created string   `json:"created"`
@@ -158,6 +162,24 @@ func (ln LinodeConnection) GetLinode(keyring daemon.DaemonKeyRing, id string) (G
 		return getLnResp, &LinodeClientError{Msg: err.Error()}
 	}
 	return getLnResp, nil
+}
+
+/*
+List all linodes on your account
+
+	:param keyring: a daemon.DaemonKeyRing implementer that can return the linode API key
+*/
+func (ln LinodeConnection) ListLinodes(keyring daemon.DaemonKeyRing) (GetAllLinodes, error) {
+	var allLinodes GetAllLinodes
+	b, err := ln.Get(keyring, LinodeInstances)
+	if err != nil {
+		return allLinodes, err
+	}
+	err = json.Unmarshal(b, &allLinodes)
+	if err != nil {
+		return allLinodes, &LinodeClientError{Msg: err.Error()}
+	}
+	return allLinodes, nil
 }
 
 /*
