@@ -12,11 +12,12 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const Key = "key"
+const Cloud = "cloud"
+
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatal("No .env supplied, please pass the path of a .env as the first arg to this test binary.\n")
-	}
-	err := godotenv.Load(os.Args[1])
+
+	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -44,9 +45,20 @@ func main() {
 	// each rung that it has on its keyring
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
 
+	if os.Args[1] == Key {
+		method := os.Args[2]
+		switch method {
+		case "show":
+			fmt.Println(apikeyring.GetKey(os.Args[3]))
+			os.Exit(0)
+
+		}
+	}
+
 	// testkey is the name of a key i created in my dev hashicorp vault, to show that you
 	// can get a key from a child keyring via using the top level keyring.GetKey() method
 	fmt.Println(apikeyring.GetKey("testkey"))
 	// Grabbing a top level key from the parent keyring
 	fmt.Println(apikeyring.GetKey(keytags.LINODE_API_KEYNAME))
+
 }
