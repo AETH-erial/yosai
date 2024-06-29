@@ -1,0 +1,59 @@
+version: "0.0"
+
+services:
+  # <----------- HASHICORP for secrets management ------------> #
+  hashicorp-vault:
+     container_name: hashicorp-vault-dev
+     image: hashicorp/vault:latest
+     cap_add:
+       - IPC_LOCK
+     environment:
+       - VAULT_DEV_ROOT_TOKEN_ID=REPLACEME
+       - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8080
+     networks:
+        - <Caddy Network Name goes here>
+  # <--------- SEMAPHORE UI STACK -----------> #
+  mysql:
+    restart: unless-stopped
+    image: mysql:8.0
+    hostname: mysql
+    volumes:
+      - semaphore-mysql:/var/lib/mysql
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+      MYSQL_DATABASE: replaceme
+      MYSQL_USER: replaceme
+      MYSQL_PASSWORD: replaceme
+    networks:
+      - <Caddy Network Name goes here>
+  semaphore:
+    container_name: ansible-semaphore
+    restart: unless-stopped
+    ports:
+      - 3000
+    image: semaphoreui/semaphore:latest
+    environment:
+      SEMAPHORE_DB_USER: replaceme
+      SEMAPHORE_DB_PASS: replaceme
+      SEMAPHORE_DB_HOST: mysql # for postgres, change to: postgres
+      SEMAPHORE_DB_PORT: 3306 # change to 5432 for postgres
+      SEMAPHORE_DB_DIALECT: mysql # for postgres, change to: postgres
+      SEMAPHORE_DB: semaphore
+      SEMAPHORE_PLAYBOOK_PATH: /tmp/semaphore/
+      SEMAPHORE_ADMIN_PASSWORD: replaceme
+      SEMAPHORE_ADMIN_NAME: replaceme
+      SEMAPHORE_ADMIN_EMAIL: whoami@localhost
+      SEMAPHORE_ADMIN: admin
+      SEMAPHORE_ACCESS_KEY_ENCRYPTION: <super secret encryption keyname>
+      SEMAPHORE_LDAP_ACTIVATED: 'no' # if you wish to use ldap, set to: 'yes' 
+      TZ: <your TZ here>
+    depends_on:
+      - mysql # for postgres, change to: postgres
+    networks:
+      - <Caddy Network Name goes here>
+volumes:
+  semaphore-mysql:
+networks:
+  <Caddy Network Name goes here>:
+    external: true
+    name: <the name of your caddy network>

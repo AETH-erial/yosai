@@ -10,11 +10,13 @@ import (
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
+	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 	"github.com/joho/godotenv"
 )
 
 const Key = "key"
 const Cloud = "cloud"
+const Sem = "semaphore"
 
 func main() {
 
@@ -35,7 +37,7 @@ func main() {
 	// as this clients keyring. This allows the API key we added earlier to be used when calling the API
 	hashiConn := hashicorp.VaultConnection{
 		VaultUrl:  os.Getenv("HASHICORP_VAULT_URL"),
-		HttpProto: "http",
+		HttpProto: "https",
 		KeyRing:   apikeyring,
 		Client:    &http.Client{},
 	}
@@ -47,6 +49,11 @@ func main() {
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
 	lnclient := linode.LinodeConnection{Client: &http.Client{}}
 
+	/*
+	   Here we are adding the Semaphore API key to the keyring and making a new semaphore client
+	*/
+	apikeyring.AddKey(keytags.SEMAPHORE_API_KEYNAME, daemon.BearerAuth{Secret: os.Getenv(keytags.SEMAPHORE_API_KEYNAME)})
+	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout)
 	if os.Args[1] == Key {
 		method := os.Args[2]
 		switch method {
@@ -55,6 +62,14 @@ func main() {
 			os.Exit(0)
 
 		}
+	}
+	if os.Args[1] == Sem {
+		err = semaphoreConn.NewProject(apikeyring, os.Args[2])
+		if err != nil {
+			log.Fatal("Error creating a new semaphore project: ", err)
+		}
+		os.Exit(0)
+
 	}
 	if os.Args[1] == Cloud {
 		method := os.Args[2]
