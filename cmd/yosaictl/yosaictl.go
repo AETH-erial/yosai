@@ -53,22 +53,30 @@ func main() {
 	   Here we are adding the Semaphore API key to the keyring and making a new semaphore client
 	*/
 	apikeyring.AddKey(keytags.SEMAPHORE_API_KEYNAME, daemon.BearerAuth{Secret: os.Getenv(keytags.SEMAPHORE_API_KEYNAME)})
-	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout)
+	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring)
 	if os.Args[1] == Key {
 		method := os.Args[2]
 		switch method {
 		case "show":
 			fmt.Println(apikeyring.GetKey(os.Args[3]))
 			os.Exit(0)
-
+		case "add":
 		}
 	}
 	if os.Args[1] == Sem {
-		err = semaphoreConn.NewProject(apikeyring, os.Args[2])
-		if err != nil {
-			log.Fatal("Error creating a new semaphore project: ", err)
+		method := os.Args[2]
+		switch method {
+		case "show":
+			proj, err := semaphoreConn.GetProjects(apikeyring)
+			if err != nil {
+				log.Fatal("Error creating a new semaphore project: ", err)
+			}
+			fmt.Printf("%+v\n", proj)
+			os.Exit(0)
+		case "status":
+			fmt.Printf("Yosai Server ID: %v\nSemaphore Upstream: %s\n", semaphoreConn.ProjectId, semaphoreConn.ServerUrl)
+			os.Exit(0)
 		}
-		os.Exit(0)
 
 	}
 	if os.Args[1] == Cloud {

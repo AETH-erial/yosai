@@ -90,6 +90,21 @@ func (c ClientCredentials) GetSecret() string {
 	return c.ClientSecret
 }
 
+type SshKey struct {
+	User       string
+	PrivateKey string
+}
+
+func (s SshKey) GetPublic() string {
+	return s.User
+}
+func (s SshKey) GetSecret() string {
+	return s.PrivateKey
+}
+func (s SshKey) Prepare() string {
+	return s.PrivateKey
+}
+
 type ApiKeyRing struct {
 	Rungs []DaemonKeyRing
 	Keys  map[string]Key // hashmap with the keys in the keyring. Protected with getters and setters
