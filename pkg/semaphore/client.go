@@ -55,6 +55,15 @@ type addSshKeyReq struct {
 	Ssh           sshKeyAdd     `json:"ssh"`
 }
 
+type KeyItemResponse struct {
+	Id            int           `json:"id"`
+	Name          string        `json:"name"`
+	Type          string        `json:"type"`
+	ProjectId     int           `json:"project_id"`
+	LoginPassword loginPassword `json:"login_password"`
+	Ssh           sshKeyAdd     `json:"ssh"`
+}
+
 type loginPassword struct {
 	Password string `json:"password"`
 	Login    string `json:"login"`
@@ -64,6 +73,14 @@ type sshKeyAdd struct {
 	Login      string `json:"login"`
 }
 
+/*
+Create a new semaphore client
+
+	    :param url: the base url of the semaphore server, without the HTTP/S prefix
+		:param proto: either HTTP or HTTPS, depending on the server's SSL setup
+		:param log: an io.Writer to write logfile to
+		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
+*/
 func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing) SemaphoreConnection {
 	log.Write([]byte("Using HTTP mode: " + proto + "\n"))
 	client := &http.Client{}
@@ -128,6 +145,7 @@ func (s SemaphoreConnection) AddSshKey(name string, keyring daemon.DaemonKeyRing
 Create a new 'Project' in Semaphore
 
 	:param name: the name to assign the project
+	:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
 func (s SemaphoreConnection) NewProject(name string, keyring daemon.DaemonKeyRing) error {
 	var b []byte
@@ -143,6 +161,37 @@ func (s SemaphoreConnection) NewProject(name string, keyring daemon.DaemonKeyRin
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
 	_, err = s.Post(keyring, ProjectsPath, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
+/*
+Add a repository to the project designated for the Yosai service
+
+	    :param giturl: the url for the git repo containing the ansible scripts for VPN server config
+		:param branch: the branch to target on the git repo
+		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
+*/
+func (s SemaphoreConnection) AddRepository(giturl string, branch string, keyring daemon.DaemonKeyRing) error {
+	key, err := s.GetSshKeyByName(keytags.GIT_SSH_KEYNAME, keyring)
+	if err != nil {
+		return err
+	}
+	repoAddRequest := addRepoToProjectReq{
+		Name:      fmt.Sprintf("%s:%s", giturl, branch),
+		ProjectId: s.ProjectId,
+		GitUrl:    giturl,
+		GitBranch: branch,
+		SshKeyId:  key.Id,
+	}
+	b, err := json.Marshal(&repoAddRequest)
+	if err != nil {
+		return &SemaphoreClientError{Msg: err.Error()}
+	}
+	_, err = s.Post(keyring, fmt.Sprintf("%s/%v/repositories", ProjectPath, s.ProjectId), bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -248,6 +297,40 @@ func (s SemaphoreConnection) GetProjectByName(name string, keyring daemon.Daemon
 		}
 	}
 	return 0, &SemaphoreClientError{Msg: fmt.Sprintf("Project with name: '%s' not found.", name)}
+}
+
+/*
+Get SSH Keys from the current project
+*/
+func (s SemaphoreConnection) GetSshKeys(keyring daemon.DaemonKeyRing) ([]KeyItemResponse, error) {
+	var sshKeys []KeyItemResponse
+	b, err := s.Get(keyring, fmt.Sprintf("%s/%v/keys", ProjectPath, s.ProjectId))
+	if err != nil {
+		return sshKeys, err
+	}
+	err = json.Unmarshal(b, &sshKeys)
+	if err != nil {
+		return sshKeys, &SemaphoreClientError{Msg: err.Error()}
+	}
+	return sshKeys, nil
+}
+
+/*
+Get SSH key by its name
+*/
+func (s SemaphoreConnection) GetSshKeyByName(name string, keyring daemon.DaemonKeyRing) (KeyItemResponse, error) {
+	var key KeyItemResponse
+	keys, err := s.GetSshKeys(keyring)
+	if err != nil {
+		return key, err
+	}
+	for i := range keys {
+		if keys[i].Name == name {
+			return keys[i], nil
+		}
+	}
+	return key, &SemaphoreClientError{Msg: "Keyname not found in Semaphore key store."}
+
 }
 
 /*

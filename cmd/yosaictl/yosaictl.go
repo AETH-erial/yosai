@@ -57,10 +57,24 @@ func main() {
 	if os.Args[1] == Key {
 		method := os.Args[2]
 		switch method {
+		case "tags":
+			for k := range keytags.AllTags {
+				fmt.Println(k)
+			}
+			os.Exit(0)
 		case "show":
 			fmt.Println(apikeyring.GetKey(os.Args[3]))
 			os.Exit(0)
 		case "add":
+			sshkey, err := apikeyring.GetKey(keytags.GIT_SSH_KEYNAME)
+			if err != nil {
+				log.Fatal(err)
+			}
+			err = semaphoreConn.AddSshKey(keytags.GIT_SSH_KEYNAME, apikeyring, daemon.SshKey{User: sshkey.GetPublic(), PrivateKey: sshkey.GetSecret()})
+			if err != nil {
+				log.Fatal(err)
+			}
+
 		}
 	}
 	if os.Args[1] == Sem {
