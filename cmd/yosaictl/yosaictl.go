@@ -54,6 +54,8 @@ func main() {
 	*/
 	apikeyring.AddKey(keytags.SEMAPHORE_API_KEYNAME, daemon.BearerAuth{Secret: os.Getenv(keytags.SEMAPHORE_API_KEYNAME)})
 	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring)
+
+	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 	if os.Args[1] == Key {
 		method := os.Args[2]
 		switch method {
@@ -70,7 +72,7 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			err = semaphoreConn.AddSshKey(keytags.GIT_SSH_KEYNAME, apikeyring, daemon.SshKey{User: sshkey.GetPublic(), PrivateKey: sshkey.GetSecret()})
+			err = semaphoreConn.AddKey(keytags.GIT_SSH_KEYNAME, daemon.SshKey{User: sshkey.GetPublic(), PrivateKey: sshkey.GetSecret()})
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -81,7 +83,7 @@ func main() {
 		method := os.Args[2]
 		switch method {
 		case "show":
-			proj, err := semaphoreConn.GetProjects(apikeyring)
+			proj, err := semaphoreConn.GetProjects()
 			if err != nil {
 				log.Fatal("Error creating a new semaphore project: ", err)
 			}

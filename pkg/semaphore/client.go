@@ -18,6 +18,7 @@ const YosaiProject = "Yosai VPN Sentinel"
 
 type SemaphoreConnection struct {
 	Client    *http.Client
+	Keyring   daemon.DaemonKeyRing
 	ServerUrl string
 	HttpProto string
 	ProjectId int
@@ -64,6 +65,22 @@ type KeyItemResponse struct {
 	Ssh           sshKeyAdd     `json:"ssh"`
 }
 
+/*
+####################################################################
+############ IMPLEMENTING daemon.Key FOR KeyItemResponse ###########
+####################################################################
+*/
+
+func (k KeyItemResponse) GetPublic() string {
+	return k.Ssh.Login
+}
+func (k KeyItemResponse) GetSecret() string {
+	return k.Ssh.PrivateKey
+}
+func (k KeyItemResponse) Prepare() string {
+	return k.Type
+}
+
 type loginPassword struct {
 	Password string `json:"password"`
 	Login    string `json:"login"`
@@ -74,41 +91,26 @@ type sshKeyAdd struct {
 }
 
 /*
-Create a new semaphore client
-
-	    :param url: the base url of the semaphore server, without the HTTP/S prefix
-		:param proto: either HTTP or HTTPS, depending on the server's SSL setup
-		:param log: an io.Writer to write logfile to
-		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
+###################################################################
+########### IMPLEMENTING THE DaemonKeyRing INTERFACE ##############
+###################################################################
 */
-func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing) SemaphoreConnection {
-	log.Write([]byte("Using HTTP mode: " + proto + "\n"))
-	client := &http.Client{}
-	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto}
-
-	id, err := semaphoreBootstrap.GetProjectByName(YosaiProject, keyring)
+/*
+Get SSH key by its name
+*/
+func (s SemaphoreConnection) GetKey(name string) (daemon.Key, error) {
+	var key KeyItemResponse
+	keys, err := s.GetSshKeys()
 	if err != nil {
-		log.Write([]byte(YosaiProject + " NOT FOUND IN SEMAPHORE. Creating..."))
-		err = semaphoreBootstrap.NewProject(YosaiProject, keyring)
-		if err != nil {
-			log.Write([]byte("FATAL ERROR CREATING PROJECT. ABANDONING SHIP. Error: " + err.Error()))
-		}
-		id, _ = semaphoreBootstrap.GetProjectByName(YosaiProject, keyring)
-		log.Write([]byte("Found " + YosaiProject + " with project id: " + fmt.Sprint(id)))
-		return SemaphoreConnection{
-			Client:    client,
-			ServerUrl: url,
-			HttpProto: proto,
-			ProjectId: id,
+		return key, err
+	}
+	for i := range keys {
+		if keys[i].Name == name {
+			return keys[i], nil
 		}
 	}
+	return key, &SemaphoreClientError{Msg: "Keyname not found in Semaphore key store."}
 
-	return SemaphoreConnection{
-		Client:    &http.Client{},
-		ServerUrl: url,
-		HttpProto: proto,
-		ProjectId: id,
-	}
 }
 
 /*
@@ -118,7 +120,7 @@ Add SSH Key to a project
 	:param keyring: a daemon.DaemonKeyRing implementer that can return the API key for Semaphore
 	:param key: a daemon.Key implementer wrapping the SSH key
 */
-func (s SemaphoreConnection) AddSshKey(name string, keyring daemon.DaemonKeyRing, key daemon.Key) error {
+func (s SemaphoreConnection) AddKey(name string, key daemon.Key) error {
 	keyAddReq := addSshKeyReq{
 		Name:      name,
 		Type:      "ssh",
@@ -133,7 +135,7 @@ func (s SemaphoreConnection) AddSshKey(name string, keyring daemon.DaemonKeyRing
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
 	path := fmt.Sprintf("%s/%v/keys", ProjectPath, s.ProjectId)
-	_, err = s.Post(keyring, path, bytes.NewReader(b))
+	_, err = s.Post(path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -142,12 +144,60 @@ func (s SemaphoreConnection) AddSshKey(name string, keyring daemon.DaemonKeyRing
 }
 
 /*
+Drop a key from the Semaphore secret store
+*/
+func (s SemaphoreConnection) RemoveKey(name string) error {
+	_, err := s.Delete(name)
+	return err
+}
+
+/*
+Create a new semaphore client
+
+	    :param url: the base url of the semaphore server, without the HTTP/S prefix
+		:param proto: either HTTP or HTTPS, depending on the server's SSL setup
+		:param log: an io.Writer to write logfile to
+		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
+*/
+func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing) SemaphoreConnection {
+	log.Write([]byte("Using HTTP mode: " + proto + "\n"))
+	client := &http.Client{}
+	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring}
+
+	id, err := semaphoreBootstrap.GetProjectByName(YosaiProject)
+	if err != nil {
+		log.Write([]byte(YosaiProject + " NOT FOUND IN SEMAPHORE. Creating..."))
+		err = semaphoreBootstrap.NewProject(YosaiProject)
+		if err != nil {
+			log.Write([]byte("FATAL ERROR CREATING PROJECT. ABANDONING SHIP. Error: " + err.Error()))
+		}
+		id, _ = semaphoreBootstrap.GetProjectByName(YosaiProject)
+		log.Write([]byte("Found " + YosaiProject + " with project id: " + fmt.Sprint(id)))
+		return SemaphoreConnection{
+			Client:    client,
+			ServerUrl: url,
+			HttpProto: proto,
+			ProjectId: id,
+			Keyring:   keyring,
+		}
+	}
+
+	return SemaphoreConnection{
+		Client:    &http.Client{},
+		ServerUrl: url,
+		HttpProto: proto,
+		ProjectId: id,
+		Keyring:   keyring,
+	}
+}
+
+/*
 Create a new 'Project' in Semaphore
 
 	:param name: the name to assign the project
 	:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func (s SemaphoreConnection) NewProject(name string, keyring daemon.DaemonKeyRing) error {
+func (s SemaphoreConnection) NewProject(name string) error {
 	var b []byte
 	var newProj newProjectReqeust
 	newProj = newProjectReqeust{
@@ -160,7 +210,7 @@ func (s SemaphoreConnection) NewProject(name string, keyring daemon.DaemonKeyRin
 	if err != nil {
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
-	_, err = s.Post(keyring, ProjectsPath, bytes.NewReader(b))
+	_, err = s.Post(ProjectsPath, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -175,23 +225,19 @@ Add a repository to the project designated for the Yosai service
 		:param branch: the branch to target on the git repo
 		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func (s SemaphoreConnection) AddRepository(giturl string, branch string, keyring daemon.DaemonKeyRing) error {
-	key, err := s.GetSshKeyByName(keytags.GIT_SSH_KEYNAME, keyring)
-	if err != nil {
-		return err
-	}
+func (s SemaphoreConnection) AddRepository(giturl string, branch string, id int) error {
 	repoAddRequest := addRepoToProjectReq{
 		Name:      fmt.Sprintf("%s:%s", giturl, branch),
 		ProjectId: s.ProjectId,
 		GitUrl:    giturl,
 		GitBranch: branch,
-		SshKeyId:  key.Id,
+		SshKeyId:  id,
 	}
 	b, err := json.Marshal(&repoAddRequest)
 	if err != nil {
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
-	_, err = s.Post(keyring, fmt.Sprintf("%s/%v/repositories", ProjectPath, s.ProjectId), bytes.NewReader(b))
+	_, err = s.Post(fmt.Sprintf("%s/%v/repositories", ProjectPath, s.ProjectId), bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -202,13 +248,12 @@ func (s SemaphoreConnection) AddRepository(giturl string, branch string, keyring
 /*
 Generic POST Request to sent to the Semaphore server
 
-	    :param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
-		:param path: the path to the API to POST. Preceeding slashes will be trimmed
-		:param body: an io.Reader implementer to use as the POST body. Must comply with application/json Content-Type
+	:param path: the path to the API to POST. Preceeding slashes will be trimmed
+	:param body: an io.Reader implementer to use as the POST body. Must comply with application/json Content-Type
 */
-func (s SemaphoreConnection) Post(keyring daemon.DaemonKeyRing, path string, body io.Reader) ([]byte, error) {
+func (s SemaphoreConnection) Post(path string, body io.Reader) ([]byte, error) {
 	var b []byte
-	apikey, err := keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
+	apikey, err := s.Keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
 	if err != nil {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
@@ -237,12 +282,11 @@ func (s SemaphoreConnection) Post(keyring daemon.DaemonKeyRing, path string, bod
 /*
 Agnostic GET method for calling the upstream Semaphore server
 
-	:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 	:param path: the path to GET, added into the base API url
 */
-func (s SemaphoreConnection) Get(keyring daemon.DaemonKeyRing, path string) ([]byte, error) {
+func (s SemaphoreConnection) Get(path string) ([]byte, error) {
 	var b []byte
-	apiKey, err := keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
+	apiKey, err := s.Keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
 	if err != nil {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
@@ -265,13 +309,20 @@ func (s SemaphoreConnection) Get(keyring daemon.DaemonKeyRing, path string) ([]b
 }
 
 /*
+Generic DELETE method for calling the Semaphore server
+*/
+func (s SemaphoreConnection) Delete(path string) ([]byte, error) {
+	return []byte{}, nil
+}
+
+/*
 Retrieve the projects in Semaphore
 
 	:param keyring: a daemon.DaemonKeyRing implementer to get the API key from for Semaphore
 */
-func (s SemaphoreConnection) GetProjects(keyring daemon.DaemonKeyRing) ([]ProjectsResponse, error) {
+func (s SemaphoreConnection) GetProjects() ([]ProjectsResponse, error) {
 	var projectsResp []ProjectsResponse
-	b, err := s.Get(keyring, ProjectsPath)
+	b, err := s.Get(ProjectsPath)
 	if err != nil {
 		return projectsResp, err
 	}
@@ -286,8 +337,8 @@ func (s SemaphoreConnection) GetProjects(keyring daemon.DaemonKeyRing) ([]Projec
 /*
 Get Project by its name, and return its ID
 */
-func (s SemaphoreConnection) GetProjectByName(name string, keyring daemon.DaemonKeyRing) (int, error) {
-	projects, err := s.GetProjects(keyring)
+func (s SemaphoreConnection) GetProjectByName(name string) (int, error) {
+	projects, err := s.GetProjects()
 	if err != nil {
 		return 0, err
 	}
@@ -302,9 +353,9 @@ func (s SemaphoreConnection) GetProjectByName(name string, keyring daemon.Daemon
 /*
 Get SSH Keys from the current project
 */
-func (s SemaphoreConnection) GetSshKeys(keyring daemon.DaemonKeyRing) ([]KeyItemResponse, error) {
+func (s SemaphoreConnection) GetSshKeys() ([]KeyItemResponse, error) {
 	var sshKeys []KeyItemResponse
-	b, err := s.Get(keyring, fmt.Sprintf("%s/%v/keys", ProjectPath, s.ProjectId))
+	b, err := s.Get(fmt.Sprintf("%s/%v/keys", ProjectPath, s.ProjectId))
 	if err != nil {
 		return sshKeys, err
 	}
@@ -313,24 +364,6 @@ func (s SemaphoreConnection) GetSshKeys(keyring daemon.DaemonKeyRing) ([]KeyItem
 		return sshKeys, &SemaphoreClientError{Msg: err.Error()}
 	}
 	return sshKeys, nil
-}
-
-/*
-Get SSH key by its name
-*/
-func (s SemaphoreConnection) GetSshKeyByName(name string, keyring daemon.DaemonKeyRing) (KeyItemResponse, error) {
-	var key KeyItemResponse
-	keys, err := s.GetSshKeys(keyring)
-	if err != nil {
-		return key, err
-	}
-	for i := range keys {
-		if keys[i].Name == name {
-			return keys[i], nil
-		}
-	}
-	return key, &SemaphoreClientError{Msg: "Keyname not found in Semaphore key store."}
-
 }
 
 /*
