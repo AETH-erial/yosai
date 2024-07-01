@@ -3,6 +3,7 @@ package hashicorp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,6 +80,9 @@ func (v VaultConnection) GetKey(name string) (daemon.Key, error) {
 		return vaultResp, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return vaultResp, errors.New(resp.Status)
+	}
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -155,6 +159,11 @@ func (v VaultConnection) RemoveKey(name string) error {
 		return &HashicorpClientError{Msg: resp.Status}
 	}
 	return nil
+}
+
+// Return the resource name for logging purposes
+func (v VaultConnection) Source() string {
+	return "Hashicorp Vault"
 }
 
 /*

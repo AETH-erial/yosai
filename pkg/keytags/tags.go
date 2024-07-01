@@ -1,5 +1,23 @@
 package keytags
 
+type Keytagger interface {
+	HashicorpVaultKeyname() string // returns the API/Vault key's name
+	LinodeApiKeyname() string      // Returns the Linode API key's name
+	VpsRootKeyname() string        // Returns the VPS Root user credentials name
+	VpsSvcAccKeyname() string      // Returns the VPS service account credentials name
+	VpsSvcAccSshKeyname() string   // returns the VPS service account's SSH key name
+	SemaphoreApiKeyname() string   // Returns the Semaphore API key name
+	GitSshKeyname() string         // Returns the name of the SSH key used to pull from the git server
+}
+
+// TODO: implement the Keytagger interface
+type ConstKeytag struct {
+}
+
+// TODO: implement the Keytagger interface
+type ConfigFileKeytag struct {
+}
+
 const HASHICORP_VAULT_KEYNAME = "HASHICORP_VAULT_KEY"
 const LINODE_API_KEYNAME = "LINODE_API_KEY"
 const SERVER_ROOT_PASS_KEYNAME = "ROOT_USER"

@@ -65,6 +65,24 @@ type KeyItemResponse struct {
 	Ssh           sshKeyAdd     `json:"ssh"`
 }
 
+type NewInventoryRequest struct {
+	Name        string `json:"name"`
+	ProjectId   int    `json:"project_id"`
+	Inventory   string `json:"inventory"` // This field is where the YAML inventory file gets put, as a string (not a filepath!)
+	Type        string `json:"type"`
+	SshKeyId    int    `json:"ssh_key_id"`
+	BecomeKeyId int    `json:"become_key_id"`
+}
+type NewInventoryRespone struct {
+	Id          int    `json:"id"`
+	Inventory   string `json:"inventory"`
+	Name        string `json:"name"`
+	ProjectId   int    `json:"project_id"`
+	Type        string `json:"type"`
+	SshKeyId    int    `json:"ssh_key_id"`
+	BecomeKeyId int    `json:"become_key_id"`
+}
+
 /*
 ####################################################################
 ############ IMPLEMENTING daemon.Key FOR KeyItemResponse ###########
@@ -109,7 +127,8 @@ func (s SemaphoreConnection) GetKey(name string) (daemon.Key, error) {
 			return keys[i], nil
 		}
 	}
-	return key, &SemaphoreClientError{Msg: "Keyname not found in Semaphore key store."}
+
+	return key, &KeyNotFound{Keyname: name}
 
 }
 
@@ -140,7 +159,6 @@ func (s SemaphoreConnection) AddKey(name string, key daemon.Key) error {
 		return err
 	}
 	return nil
-
 }
 
 /*
@@ -149,6 +167,11 @@ Drop a key from the Semaphore secret store
 func (s SemaphoreConnection) RemoveKey(name string) error {
 	_, err := s.Delete(name)
 	return err
+}
+
+// Return the resource name for logging purposes
+func (s SemaphoreConnection) Source() string {
+	return "Semaphore Keystore"
 }
 
 /*
@@ -367,8 +390,59 @@ func (s SemaphoreConnection) GetSshKeys() ([]KeyItemResponse, error) {
 }
 
 /*
-Retrieve the SSH keys associated with a project
+Return an SSH key ID from the Semaphore keystore by it's name
+
+	:param keyname: the name of the key in Semaphore
 */
+func (s SemaphoreConnection) GetSshKeyId(keyname string) (int, error) {
+	keys, err := s.GetSshKeys()
+	if err != nil {
+		return 0, err
+	}
+	for i := range keys {
+		if keys[i].Name == keyname {
+			return keys[i].Id, nil
+		}
+	}
+	return 0, &KeyNotFound{Keyname: keyname}
+}
+
+/*
+######################################################
+############# YAML INVENTORY STRUCTS #################
+######################################################
+*/
+type YamlInventory struct {
+	All yamlInvAll `yaml:"all"`
+}
+
+type yamlInvAll struct {
+	Children yamlInvChildren `yaml:"children"`
+}
+
+type yamlInvChildren struct {
+	Hosts map[string]string `yaml:"hosts"`
+}
+
+/*
+YAML inventory builder function
+
+	:param hosts: a list of host IP addresses to add to the VPN server inventory
+*/
+func YamlInventoryBuilder(hosts []string) YamlInventory {
+	hostmap := map[string]string{}
+	for i := range hosts {
+		hostmap[hosts[i]] = ""
+	}
+	return YamlInventory{
+		All: yamlInvAll{
+			Children: yamlInvChildren{
+				Hosts: hostmap,
+			},
+		},
+	}
+
+}
 
 /*
 ##########################################
@@ -383,4 +457,10 @@ type SemaphoreClientError struct {
 // Implementing error interface
 func (s *SemaphoreClientError) Error() string {
 	return fmt.Sprintf("There was an error with the call to the semaphore server: '%s'", s.Msg)
+}
+
+type KeyNotFound struct{ Keyname string }
+
+func (k *KeyNotFound) Error() string {
+	return fmt.Sprintf("Key '%s' was not found in the Semaphore Keystore", k.Keyname)
 }

@@ -128,6 +128,7 @@ func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 				a.AddKey(name, key)
 				return key, nil
 			}
+
 		}
 	}
 	return key, &KeyNotFound{Name: name}
@@ -162,6 +163,11 @@ func (a *ApiKeyRing) RemoveKey(name string) error {
 	return nil
 }
 
+// Return the resource name for logging purposes
+func (a *ApiKeyRing) Source() string {
+	return "Base API Keyring"
+}
+
 /*
 Create a new daemon keyring. Passing additional implementers of the DaemonKeyRing will
 allow the GetKey() method on the toplevel keyring to search all subsequent keyrings for a match.
@@ -186,6 +192,7 @@ type DaemonKeyRing interface {
 	GetKey(string) (Key, error) // retrieve a key by its tag on the keyring
 	AddKey(string, Key) error   // Add a key to your keyring
 	RemoveKey(string) error     // Remove a key from the keyring
+	Source() string             // Return the name of the resource being called, i.e. 'Semaphone Keystore', or 'Hashicorp Vault'
 }
 
 type Key interface {
