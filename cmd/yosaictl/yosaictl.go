@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 
@@ -19,7 +21,20 @@ const Cloud = "cloud"
 const Sem = "semaphore"
 const Config = "config"
 const Bootstrap = "bootstrap"
+const Daemon = "daemon"
 
+const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
+
+func reader(r io.Reader) {
+	buf := make([]byte, 1024)
+	for {
+		n, err := r.Read(buf[:])
+		if err != nil {
+			return
+		}
+		println("Client got:", string(buf[0:n]))
+	}
+}
 func main() {
 
 	err := godotenv.Load(".env")
@@ -54,6 +69,27 @@ func main() {
 	   Here we are adding the Semaphore API key to the keyring and making a new semaphore client
 	*/
 	conf := daemon.ReadConfig("./.config.json")
+
+	if os.Args[1] == Daemon {
+		conn, err := net.Dial("unix", UNIX_DOMAIN_SOCK_PATH)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer conn.Close()
+		_, err = conn.Write([]byte(os.Args[2]))
+		if err != nil {
+			log.Fatal("write error:", err)
+		}
+		resp := make([]byte, 4096)
+		_, err = conn.Read(resp)
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("exited ok.")
+				os.Exit(0)
+			}
+			log.Fatal(err)
+		}
+	}
 
 	if os.Args[1] == Config {
 		method := os.Args[2]

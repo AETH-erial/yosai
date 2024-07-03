@@ -1,10 +1,11 @@
 .PHONY: build format test install coverage coverage-html
 
 YOSAICTL = yosaictl
+YOSAID = yosaid
 
 build:
-	go build -x -v -o ./build/linux/$(YOSAICTL)/$(YOSAICTL) ./cmd/$(YOSAICTL)/$(YOSAICTL).go
-
+	go build -x -v -o ./build/linux/$(YOSAICTL)/$(YOSAICTL) ./cmd/$(YOSAICTL)/$(YOSAICTL).go && \
+		go build -x -v -o ./build/linux/$(YOSAID)/$(YOSAID) ./cmd/$(YOSAID)/$(YOSAID).go
 format:
 	go fmt ./...
 
