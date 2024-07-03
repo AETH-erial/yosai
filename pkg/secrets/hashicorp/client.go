@@ -2,6 +2,7 @@ package hashicorp
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ type VaultResponseInner struct {
 type VaultItem struct {
 	Public string `json:"public"`
 	Secret string `json:"secret"`
+	Type   string `json:"type"`
 }
 
 type VaultConnection struct {
@@ -52,7 +54,15 @@ func (v VaultResponse) GetSecret() string {
 
 // this is an extra implementation so VaultResponse can implement the daemon.Key interface
 func (v VaultResponse) Prepare() string {
-	return ""
+	if v.Data.Data.Type == "bearer" {
+		return fmt.Sprintf("Bearer %s", v.GetSecret())
+	}
+	if v.Data.Data.Type == "basic" {
+
+		encodedcreds := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", v.GetPublic(), v.GetSecret())))
+		return fmt.Sprintf("Basic %s", encodedcreds)
+	}
+	return "CREDENTIAL TYPE INVALID"
 }
 
 /*

@@ -72,11 +72,11 @@ type LinodeConnection struct {
 // Construct a NewLinodeBody struct for a CreateNewLinode call
 func NewLinodeBodyBuilder(image string, region string, linodeType string, keyring daemon.DaemonKeyRing) (NewLinodeBody, error) {
 	var newLnBody NewLinodeBody
-	rootPass, err := keyring.GetKey(keytags.SERVER_ROOT_PASS_KEYNAME)
+	rootPass, err := keyring.GetKey(keytags.VPS_ROOT_PASS_KEYNAME)
 	if err != nil {
 		return newLnBody, &LinodeClientError{Msg: err.Error()}
 	}
-	rootSshKey, err := keyring.GetKey(keytags.SERVER_SSH_KEY_KEYNAME)
+	rootSshKey, err := keyring.GetKey(keytags.VPS_SSH_KEY_KEYNAME)
 	if err != nil {
 		return newLnBody, &LinodeClientError{Msg: err.Error()}
 	}
@@ -206,12 +206,12 @@ func (ln LinodeConnection) CreateNewLinode(keyring daemon.DaemonKeyRing, body Ne
 		return newLnResp, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return newLnResp, &LinodeClientError{Msg: resp.Status}
-	}
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return newLnResp, &LinodeClientError{Msg: err.Error()}
+	}
+	if resp.StatusCode != 200 {
+		return newLnResp, &LinodeClientError{Msg: resp.Status}
 	}
 	err = json.Unmarshal(b, &newLnResp)
 	if err != nil {

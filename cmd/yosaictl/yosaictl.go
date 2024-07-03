@@ -17,6 +17,8 @@ import (
 const Key = "key"
 const Cloud = "cloud"
 const Sem = "semaphore"
+const Config = "config"
+const Bootstrap = "bootstrap"
 
 func main() {
 
@@ -31,7 +33,6 @@ func main() {
 	apikeyring.AddKey(keytags.HASHICORP_VAULT_KEYNAME, daemon.BearerAuth{
 		Secret: os.Getenv(keytags.HASHICORP_VAULT_KEYNAME),
 	})
-	apikeyring.AddKey(keytags.LINODE_API_KEYNAME, daemon.BearerAuth{Secret: os.Getenv(keytags.LINODE_API_KEYNAME)})
 
 	// creating the connection client with Hashicorp vault, and using the keyring we created above
 	// as this clients keyring. This allows the API key we added earlier to be used when calling the API
@@ -52,10 +53,55 @@ func main() {
 	/*
 	   Here we are adding the Semaphore API key to the keyring and making a new semaphore client
 	*/
-	apikeyring.AddKey(keytags.SEMAPHORE_API_KEYNAME, daemon.BearerAuth{Secret: os.Getenv(keytags.SEMAPHORE_API_KEYNAME)})
-	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring)
+	conf := daemon.ReadConfig("./.config.json")
 
-	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
+	if os.Args[1] == Config {
+		method := os.Args[2]
+		switch method {
+		case "init":
+			daemon.BlankConfig("./.config.template.json")
+			os.Exit(0)
+		}
+	}
+	if os.Args[1] == Bootstrap {
+		semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring)
+		apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
+
+		linodeReq, err := linode.NewLinodeBodyBuilder(conf.Image(), conf.Region(), conf.LinodeType(), apikeyring)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("%+v\n", linodeReq)
+		newLnResp, err := lnclient.CreateNewLinode(apikeyring, linodeReq)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Seed Semaphore with details
+		gitKey, err := apikeyring.GetKey(keytags.GIT_SSH_KEYNAME)
+		if err != nil {
+			log.Fatal(err)
+		}
+		keyReq := semaphoreConn.NewKeyRequestBuilder(keytags.GIT_SSH_KEYNAME, "ssh", gitKey)
+		err = semaphoreConn.AddKey(keytags.GIT_SSH_KEYNAME, keyReq)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = semaphoreConn.AddRepository(conf.Repo(), conf.Branch())
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = semaphoreConn.AddInventory(newLnResp.Ipv4)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = semaphoreConn.AddJobTemplate("playbook_gather_facts.yml", fmt.Sprintf("%s:%s", conf.Repo(), conf.Branch()))
+		if err != nil {
+			log.Fatal(err)
+		}
+		os.Exit(0)
+
+	}
+
 	if os.Args[1] == Key {
 		method := os.Args[2]
 		switch method {
@@ -65,9 +111,15 @@ func main() {
 			}
 			os.Exit(0)
 		case "show":
-			fmt.Println(apikeyring.GetKey(os.Args[3]))
+			found, err := apikeyring.GetKey(os.Args[3])
+			if err != nil {
+				log.Fatal("Key '", os.Args[3], "' Not found.")
+			}
+			fmt.Printf("%+v\n", found)
 			os.Exit(0)
 		case "add":
+			semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring)
+			apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 			sshkey, err := apikeyring.GetKey(keytags.GIT_SSH_KEYNAME)
 			if err != nil {
 				log.Fatal(err)
@@ -80,6 +132,8 @@ func main() {
 		}
 	}
 	if os.Args[1] == Sem {
+		semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring)
+		apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 		method := os.Args[2]
 		switch method {
 		case "show":
@@ -92,6 +146,17 @@ func main() {
 		case "status":
 			fmt.Printf("Yosai Server ID: %v\nSemaphore Upstream: %s\n", semaphoreConn.ProjectId, semaphoreConn.ServerUrl)
 			os.Exit(0)
+		case "add":
+			err = semaphoreConn.AddJobTemplate(conf.PlaybookName(), fmt.Sprintf("%s:%s", conf.Repo(), conf.Branch()))
+			if err != nil {
+				log.Fatal(err)
+			}
+			os.Exit(0)
+		case "inv":
+			err = semaphoreConn.AddInventory([]string{os.Args[3]})
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 
 	}

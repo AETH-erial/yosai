@@ -27,3 +27,6 @@ build/*
 
 # ignoring environment variable files
 *.env
+
+# ignoring config stuff
+.config.*
