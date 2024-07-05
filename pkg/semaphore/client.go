@@ -518,14 +518,9 @@ Get Inventory by name and return its ID
 :param name: the name of the inventory to find
 */
 func (s SemaphoreConnection) GetInventoryId(name string) (int, error) {
-	var resp []InventoryResponse
-	b, err := s.Get(fmt.Sprintf("%s/%v/%s", ProjectPath, s.ProjectId, "inventory"))
+	resp, err := s.GetAllInventories()
 	if err != nil {
 		return 0, err
-	}
-	err = json.Unmarshal(b, &resp)
-	if err != nil {
-		return 0, &SemaphoreClientError{Msg: err.Error()}
 	}
 	for i := range resp {
 		if resp[i].Name == name {
@@ -537,20 +532,30 @@ func (s SemaphoreConnection) GetInventoryId(name string) (int, error) {
 }
 
 /*
+Get all inventories from Semaphore
+*/
+func (s SemaphoreConnection) GetAllInventories() ([]InventoryResponse, error) {
+	var resp []InventoryResponse
+	b, err := s.Get(fmt.Sprintf("%s/%v/%s", ProjectPath, s.ProjectId, "inventory"))
+	if err != nil {
+		return resp, err
+
+	}
+	err = json.Unmarshal(b, &resp)
+	if err != nil {
+		return resp, &SemaphoreClientError{Msg: err.Error()}
+	}
+	return resp, nil
+}
+
+/*
 Get a repo ID by its name
 :param name: the name of the repo
 */
 func (s SemaphoreConnection) GetRepoByName(name string) (int, error) {
-	var resp []NewRepoResponse
-	b, err := s.Get(fmt.Sprintf("%s/%v/%s", ProjectPath, s.ProjectId, "repositories"))
+	resp, err := s.GetAllRepos()
 	if err != nil {
-
-		return 0, &SemaphoreClientError{Msg: err.Error()}
-	}
-	err = json.Unmarshal(b, &resp)
-	if err != nil {
-
-		return 0, &SemaphoreClientError{Msg: err.Error()}
+		return 0, err
 	}
 	for i := range resp {
 		if resp[i].Name == name {
@@ -559,6 +564,23 @@ func (s SemaphoreConnection) GetRepoByName(name string) (int, error) {
 	}
 
 	return 0, &KeyNotFound{Keyname: name}
+}
+
+/*
+Get all repositories from Semaphore
+*/
+func (s SemaphoreConnection) GetAllRepos() ([]NewRepoResponse, error) {
+	var resp []NewRepoResponse
+	b, err := s.Get(fmt.Sprintf("%s/%v/%s", ProjectPath, s.ProjectId, "repositories"))
+	if err != nil {
+		return resp, &SemaphoreClientError{Msg: err.Error()}
+	}
+	err = json.Unmarshal(b, &resp)
+	if err != nil {
+		return resp, &SemaphoreClientError{Msg: err.Error()}
+	}
+	return resp, nil
+
 }
 
 // Create an environment variable configuration, currently unimplemented
@@ -608,6 +630,71 @@ func (s SemaphoreConnection) AddJobTemplate(playbook string, repoName string) er
 	}
 	return nil
 
+}
+
+/*
+##########################################################
+######## IMPLEMENTING daemon.ActionIn INTERFACE ##########
+##########################################################
+*/
+type SemaphoreActionOut struct {
+	Content string
+}
+
+func (s SemaphoreActionOut) GetResult() string { return s.Content }
+
+/*
+Implementing the router interface
+*/
+func (s SemaphoreConnection) SemaphoreRouter(arg daemon.ActionIn) (daemon.ActionOut, error) {
+	var out SemaphoreActionOut
+	switch arg.Method() {
+	case "show":
+		switch arg.Arg() {
+		case "keys":
+			keys, err := s.GetAllKeys()
+			if err != nil {
+				return out, err
+			}
+			b, err := json.MarshalIndent(keys, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: string(b)}, nil
+		case "projects":
+			proj, err := s.GetProjects()
+			if err != nil {
+				return out, err
+			}
+			b, err := json.MarshalIndent(proj, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: string(b)}, nil
+		case "repos":
+			repos, err := s.GetAllRepos()
+			if err != nil {
+				return out, err
+			}
+			b, err := json.MarshalIndent(repos, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: string(b)}, nil
+		case "inventories":
+			invs, err := s.GetAllInventories()
+			if err != nil {
+				return out, err
+			}
+			b, err := json.MarshalIndent(invs, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: string(b)}, nil
+		}
+
+	}
+	return out, &daemon.InvalidAction{Msg: "Unresolved method!"}
 }
 
 /*

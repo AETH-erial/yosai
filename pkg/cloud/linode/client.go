@@ -40,6 +40,17 @@ type GetLinodeResponse struct {
 	Status  string   `json:"status"`
 }
 
+/*
+implementing the daemon.ActionOut interface
+*/
+func (g GetLinodeResponse) GetResult() string {
+	b, err := json.MarshalIndent(g, " ", "    ")
+	if err != nil {
+		return "Error unmarshalling response: " + err.Error()
+	}
+	return string(b)
+}
+
 type TypesResponse struct {
 	Data []TypesResponseInner `json:"data"`
 }
@@ -320,13 +331,41 @@ func (lno LinodeActionOut) GetResult() string {
 	return lno.Content
 }
 
-func (ln LinodeConnection) GetLinodesActionOut(arg interface{}) (daemon.ActionOut, error) {
+func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOut, error) {
 	var out LinodeActionOut
-	servers, err := ln.ListLinodes()
-	if err != nil {
-		return out, err
+
+	switch action.Method() {
+	case "show":
+		switch action.Arg() {
+		case "all":
+			servers, err := ln.ListLinodes()
+			if err != nil {
+				return out, err
+			}
+			return servers, nil
+		default:
+			server, err := ln.GetLinode(action.Arg())
+			if err != nil {
+				return out, err
+			}
+			return server, nil
+
+		}
+	case "rm":
+		switch action.Arg() {
+		case "":
+			return out, &daemon.InvalidAction{Msg: "Not enough args passed."}
+		default:
+			err := ln.DeleteLinode(action.Arg())
+			if err != nil {
+				return out, err
+			}
+			return LinodeActionOut{Content: "Linode: " + action.Arg() + " deleted successfully."}, nil
+
+		}
+
 	}
-	return servers, nil
+	return LinodeActionOut{Content: "Unresolved method."}, nil
 }
 
 /*

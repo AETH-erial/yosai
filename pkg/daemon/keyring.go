@@ -3,7 +3,6 @@ package daemon
 import (
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/url"
 )
 
@@ -201,18 +200,29 @@ func NewKeyRing() *ApiKeyRing {
 /*
 Function to wrap GetKey that will return an ActionOut implementer
 */
-func (a *ApiKeyRing) GetKeyActionOut(args interface{}) (ActionOut, error) {
-	v, ok := args.(string)
-	if !ok {
-		log.Fatal(fmt.Sprint(args) + " was not a string.")
+func (a *ApiKeyRing) KeyringRouter(arg ActionIn) (ActionOut, error) {
+	var out KeyGetterActionOut
+	switch arg.Method() {
+	case "show":
+		switch arg.Arg() {
+		case "all":
+			// unimplemented
+			return out, nil
+		case "":
+			return out, &InvalidAction{Msg: "No argument passed!"}
+		default:
+			key, err := a.GetKey(arg.Arg())
+
+			if err != nil {
+				return out, err
+			}
+			out = KeyGetterActionOut{Public: key.GetPublic(), Private: key.GetSecret()}
+
+			return out, nil
+
+		}
 	}
-	var k KeyGetterActionOut
-	key, err := a.GetKey(v)
-	if err != nil {
-		return k, err
-	}
-	k = KeyGetterActionOut{Public: key.GetPublic(), Private: key.GetSecret()}
-	return k, nil
+	return out, &InvalidAction{Msg: "No method resolved!"}
 }
 
 /*

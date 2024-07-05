@@ -13,7 +13,7 @@ type Configuration interface {
 	Image() string
 	Region() string
 	LinodeType() string
-	ConfigDump(arg interface{}) (ActionOut, error)
+	ConfigRouter(arg ActionIn) (ActionOut, error)
 }
 
 type ConfigurationActionOut struct {
@@ -27,7 +27,7 @@ func (c ConfigurationActionOut) GetResult() string {
 }
 
 // Implemeting the interface to make this callable via the CLI
-func (c ConfigFromFile) ConfigDump(arg interface{}) (ActionOut, error) {
+func (c ConfigFromFile) ConfigRouter(arg ActionIn) (ActionOut, error) {
 	var out ConfigurationActionOut
 	b, err := json.MarshalIndent(&c, "", "   ")
 	if err != nil {
