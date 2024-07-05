@@ -159,17 +159,25 @@ func (c *Context) parseAction(msg []byte) (Action, error) {
 	var action Action
 	c.Log("Recieved request to parse action. ", string(msg))
 	msgSplit := strings.Split(strings.Trim(string(msg), " "), " ")
-	if len(msgSplit) == 1 {
-		c.Log("Not enough arguments was passed to function call: ", fmt.Sprint(len(msgSplit)))
-		return action, &InvalidAction{Action: "None", Msg: "Not Enough Args."}
-	}
+	/*
+		if len(msgSplit) == 1 {
+			c.Log("Not enough arguments was passed to function call: ", fmt.Sprint(len(msgSplit)))
+			return action, &InvalidAction{Action: "None", Msg: "Not Enough Args."}
+		}
+	*/
 	_, ok := Actions[msgSplit[0]]
 	if !ok {
 		c.Log("Action not found: ", msgSplit[0])
 		return action, &InvalidAction{Action: msgSplit[0], Msg: "Action not resolveable."}
 	}
 	method := msgSplit[0]
-	arg := msgSplit[1]
+	var arg string
+	if len(msgSplit) < 2 {
+		arg = ""
+	} else {
+		arg = msgSplit[1]
+	}
+
 	action = Action{
 		Target: method,
 		Args:   arg,

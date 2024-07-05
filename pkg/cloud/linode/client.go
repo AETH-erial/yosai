@@ -23,6 +23,14 @@ type GetAllLinodes struct {
 	Data []GetLinodeResponse `json:"data"`
 }
 
+func (g GetAllLinodes) GetResult() string {
+	resp, err := json.MarshalIndent(&g, " ", "    ")
+	if err != nil {
+		return "Sorry, couldnt parse the json." + err.Error()
+	}
+	return string(resp)
+}
+
 type GetLinodeResponse struct {
 	Id      int      `json:"id"`
 	Ipv4    []string `json:"ipv4"`
@@ -66,7 +74,8 @@ type NewLinodeBody struct {
 }
 
 type LinodeConnection struct {
-	Client *http.Client
+	Client  *http.Client
+	Keyring daemon.DaemonKeyRing
 }
 
 // Construct a NewLinodeBody struct for a CreateNewLinode call
@@ -94,9 +103,9 @@ Get all regions that a server can be deployed in from Linode
 
 	:param keyring: a daemon.DaemonKeyRing implementer that is able to return a linode API key
 */
-func (ln LinodeConnection) GetRegions(keyring daemon.DaemonKeyRing) (RegionsResponse, error) {
+func (ln LinodeConnection) GetRegions() (RegionsResponse, error) {
 	var regions RegionsResponse
-	b, err := ln.Get(keyring, LinodeRegions)
+	b, err := ln.Get(LinodeRegions)
 	if err != nil {
 		return regions, err
 	}
@@ -113,9 +122,9 @@ Get all of the available image types from linode
 
 	:param keyring: a daemon.DaemonKeyRing interface implementer. Responsible for getting the linode API key
 */
-func (ln LinodeConnection) GetImages(keyring daemon.DaemonKeyRing) (ImagesResponse, error) {
+func (ln LinodeConnection) GetImages() (ImagesResponse, error) {
 	var imgResp ImagesResponse
-	b, err := ln.Get(keyring, LinodeImages)
+	b, err := ln.Get(LinodeImages)
 	if err != nil {
 		return imgResp, err
 	}
@@ -133,9 +142,9 @@ Get all of the available Linode types from linode
 
 	:param keyring: a daemon.DaemonKeyRing interface implementer. Responsible for getting the linode API key
 */
-func (ln LinodeConnection) GetTypes(keyring daemon.DaemonKeyRing) (TypesResponse, error) {
+func (ln LinodeConnection) GetTypes() (TypesResponse, error) {
 	var typesResp TypesResponse
-	b, err := ln.Get(keyring, LinodeTypes)
+	b, err := ln.Get(LinodeTypes)
 	if err != nil {
 		return typesResp, err
 	}
@@ -151,9 +160,9 @@ func (ln LinodeConnection) GetTypes(keyring daemon.DaemonKeyRing) (TypesResponse
 /*
 Get a Linode by its ID, used for assertion when deleting an old linode
 */
-func (ln LinodeConnection) GetLinode(keyring daemon.DaemonKeyRing, id string) (GetLinodeResponse, error) {
+func (ln LinodeConnection) GetLinode(id string) (GetLinodeResponse, error) {
 	var getLnResp GetLinodeResponse
-	b, err := ln.Get(keyring, fmt.Sprintf("%s/%s", LinodeInstances, id))
+	b, err := ln.Get(fmt.Sprintf("%s/%s", LinodeInstances, id))
 	if err != nil {
 		return getLnResp, err
 	}
@@ -169,9 +178,9 @@ List all linodes on your account
 
 	:param keyring: a daemon.DaemonKeyRing implementer that can return the linode API key
 */
-func (ln LinodeConnection) ListLinodes(keyring daemon.DaemonKeyRing) (GetAllLinodes, error) {
+func (ln LinodeConnection) ListLinodes() (GetAllLinodes, error) {
 	var allLinodes GetAllLinodes
-	b, err := ln.Get(keyring, LinodeInstances)
+	b, err := ln.Get(LinodeInstances)
 	if err != nil {
 		return allLinodes, err
 	}
@@ -188,13 +197,13 @@ Create a new linode instance
 	    :param keyring: a daemon.DaemonKeyRing implementer that can return a linode API key
 		:param body: the request body for the new linode request
 */
-func (ln LinodeConnection) CreateNewLinode(keyring daemon.DaemonKeyRing, body NewLinodeBody) (GetLinodeResponse, error) {
+func (ln LinodeConnection) CreateNewLinode(body NewLinodeBody) (GetLinodeResponse, error) {
 	var newLnResp GetLinodeResponse
 	reqBody, err := json.Marshal(&body)
 	if err != nil {
 		return newLnResp, err
 	}
-	apiKey, err := keyring.GetKey(keytags.LINODE_API_KEYNAME)
+	apiKey, err := ln.Keyring.GetKey(keytags.LINODE_API_KEYNAME)
 	if err != nil {
 		return newLnResp, &LinodeClientError{Msg: err.Error()}
 	}
@@ -226,12 +235,12 @@ Delete a linode instance. Internally, this function will check that the linode I
 
 	:param id: the id of the linode.
 */
-func (ln LinodeConnection) DeleteLinode(keyring daemon.DaemonKeyRing, id string) error {
-	_, err := ln.GetLinode(keyring, id)
+func (ln LinodeConnection) DeleteLinode(id string) error {
+	_, err := ln.GetLinode(id)
 	if err != nil {
 		return &LinodeClientError{Msg: err.Error()}
 	}
-	_, err = ln.Delete(keyring, fmt.Sprintf("%s/%s", LinodeInstances, id))
+	_, err = ln.Delete(fmt.Sprintf("%s/%s", LinodeInstances, id))
 	if err != nil {
 		return &LinodeClientError{Msg: err.Error()}
 	}
@@ -244,9 +253,9 @@ Agnostic GET method for calling the upstream linode server
 	:param keyring: a daemon.DaemonKeyRing implementer to get the linode API key from
 	:param path: the path to GET, added into the base API url
 */
-func (ln LinodeConnection) Get(keyring daemon.DaemonKeyRing, path string) ([]byte, error) {
+func (ln LinodeConnection) Get(path string) ([]byte, error) {
 	var b []byte
-	apiKey, err := keyring.GetKey(keytags.LINODE_API_KEYNAME)
+	apiKey, err := ln.Keyring.GetKey(keytags.LINODE_API_KEYNAME)
 	if err != nil {
 		return b, &LinodeClientError{Msg: err.Error()}
 	}
@@ -274,9 +283,9 @@ Agnostic DELETE method for deleting a resource from Linode
 	:param keyring: a daemon.DaemonKeyRing implementer for getting the linode API key
 	:param path: the path to perform the DELETE method on
 */
-func (ln LinodeConnection) Delete(keyring daemon.DaemonKeyRing, path string) ([]byte, error) {
+func (ln LinodeConnection) Delete(path string) ([]byte, error) {
 	var b []byte
-	apiKey, err := keyring.GetKey(keytags.LINODE_API_KEYNAME)
+	apiKey, err := ln.Keyring.GetKey(keytags.LINODE_API_KEYNAME)
 	if err != nil {
 		return b, &LinodeClientError{Msg: err.Error()}
 	}
@@ -296,6 +305,28 @@ func (ln LinodeConnection) Delete(keyring daemon.DaemonKeyRing, path string) ([]
 	}
 	return b, nil
 
+}
+
+/*
+############################################
+#### IMPLEMENTING DAEMON CLI INTERFACES ####
+############################################
+*/
+type LinodeActionOut struct {
+	Content string
+}
+
+func (lno LinodeActionOut) GetResult() string {
+	return lno.Content
+}
+
+func (ln LinodeConnection) GetLinodesActionOut(arg interface{}) (daemon.ActionOut, error) {
+	var out LinodeActionOut
+	servers, err := ln.ListLinodes()
+	if err != nil {
+		return out, err
+	}
+	return servers, nil
 }
 
 /*

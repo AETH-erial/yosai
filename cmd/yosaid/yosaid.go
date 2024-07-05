@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
@@ -33,11 +34,13 @@ func main() {
 		KeyRing:   apikeyring,
 		Client:    &http.Client{},
 	}
+	lnConn := linode.LinodeConnection{Client: &http.Client{}, Keyring: apikeyring}
 
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
 	conf := daemon.ReadConfig("./.config.json")
 	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring)
 	ctx.Register("key", apikeyring.GetKeyActionOut)
 	ctx.Register("config", conf.ConfigDump)
+	ctx.Register("cloud", lnConn.GetLinodesActionOut)
 	ctx.ListenAndServe()
 }
