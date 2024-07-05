@@ -3,8 +3,18 @@ package daemon
 import (
 	"encoding/base64"
 	"fmt"
+	"log"
 	"net/url"
 )
+
+type KeyGetterActionOut struct {
+	Private string
+	Public  string
+}
+
+func (k KeyGetterActionOut) GetResult() string {
+	return fmt.Sprintf("Public: %s\nPrivate: %s\n", k.Public, k.Private)
+}
 
 type VpsRootUser struct {
 	Password string
@@ -34,6 +44,13 @@ Return the private data for this auth type
 */
 func (b BearerAuth) GetSecret() string {
 	return b.Secret
+}
+
+/*
+Spit out a string with the data so that we can implement the 'ActionOut' interface
+*/
+func (b BearerAuth) GetResult() string {
+	return fmt.Sprintf("Public: %s\nSecret: %s\n", b.GetPublic(), b.GetSecret())
 }
 
 type BasicAuth struct {
@@ -123,6 +140,7 @@ func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 	}
 	if len(a.Rungs) > 0 {
 		for i := range a.Rungs {
+			fmt.Println("trying to get key: " + name)
 			key, err := a.Rungs[i].GetKey(name)
 			if err == nil {
 				a.AddKey(name, key)
@@ -178,6 +196,23 @@ func NewKeyRing() *ApiKeyRing {
 		Rungs: []DaemonKeyRing{},
 	}
 
+}
+
+/*
+Function to wrap GetKey that will return an ActionOut implementer
+*/
+func (a *ApiKeyRing) GetKeyActionOut(args interface{}) (ActionOut, error) {
+	v, ok := args.(string)
+	if !ok {
+		log.Fatal(fmt.Sprint(args) + " was not a string.")
+	}
+	var k KeyGetterActionOut
+	key, err := a.GetKey(v)
+	if err != nil {
+		return k, err
+	}
+	k = KeyGetterActionOut{Public: key.GetPublic(), Private: key.GetSecret()}
+	return k, nil
 }
 
 /*

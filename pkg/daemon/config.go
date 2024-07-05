@@ -13,6 +13,29 @@ type Configuration interface {
 	Image() string
 	Region() string
 	LinodeType() string
+	ConfigDump(arg interface{}) (ActionOut, error)
+}
+
+type ConfigurationActionOut struct {
+	Config string
+}
+
+// Implementing the ActionOut interface
+func (c ConfigurationActionOut) GetResult() string {
+	return c.Config
+
+}
+
+// Implemeting the interface to make this callable via the CLI
+func (c ConfigFromFile) ConfigDump(arg interface{}) (ActionOut, error) {
+	var out ConfigurationActionOut
+	b, err := json.MarshalIndent(&c, "", "   ")
+	if err != nil {
+		return out, err
+	}
+	out = ConfigurationActionOut{Config: string(b)}
+	return out, nil
+
 }
 
 type ConfigFromFile struct {
