@@ -633,6 +633,11 @@ func (s SemaphoreConnection) AddJobTemplate(playbook string, repoName string) er
 }
 
 /*
+Bootstrap the Semaphore environment
+*/
+func (s SemaphoreConnection) Bootstrap() error { return nil }
+
+/*
 ##########################################################
 ######## IMPLEMENTING daemon.ActionIn INTERFACE ##########
 ##########################################################

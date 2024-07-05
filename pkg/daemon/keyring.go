@@ -226,6 +226,11 @@ func (a *ApiKeyRing) KeyringRouter(arg ActionIn) (ActionOut, error) {
 }
 
 /*
+Bootstrap the keyring
+*/
+func (a *ApiKeyRing) Bootstrap() error { return nil }
+
+/*
 
 ######################
 ##### INTERFACES #####

@@ -319,6 +319,11 @@ func (ln LinodeConnection) Delete(path string) ([]byte, error) {
 }
 
 /*
+Bootstrap the cloud environment
+*/
+func (ln LinodeConnection) Bootstrap() error { return nil }
+
+/*
 ############################################
 #### IMPLEMENTING DAEMON CLI INTERFACES ####
 ############################################
