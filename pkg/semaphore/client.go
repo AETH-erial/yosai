@@ -38,6 +38,16 @@ type NewTemplateRequest struct {
 	Type          string `json:"type"`
 }
 
+type JobTemplate struct {
+	Id            string `json:"id"`
+	ProjectId     int    `json:"project_id"`
+	Name          string `json:"name"`
+	InventoryId   int    `json:"inventory_id"`
+	RepositoryId  int    `json:"repository_id"`
+	EnvironmentId int    `json:"environment_id"`
+	Playbook      string `json:"playbook"`
+}
+
 type ProjectsResponse struct {
 	Id               int    `json:"id"`
 	Name             string `json:"name"`
@@ -630,6 +640,49 @@ func (s SemaphoreConnection) AddJobTemplate(playbook string, repoName string) er
 	}
 	return nil
 
+}
+
+/*
+Get a job template ID by name
+
+	:param name: the name of the job template ID
+*/
+func (s SemaphoreConnection) GetAllTemplates() ([]JobTemplate, error) {
+	var jobs []JobTemplate
+	resp, err := s.Get(fmt.Sprintf("%s/%v/tasks", ProjectPath, s.ProjectId))
+	if err != nil {
+		return jobs, err
+	}
+	err = json.Unmarshal(resp, &jobs)
+	if err != nil {
+		return jobs, &SemaphoreClientError{Msg: "Error unmarshalling payload response: " + err.Error()}
+	}
+	return jobs, nil
+
+}
+
+/*
+Bootstrap the Semaphore environment
+*/
+
+/*
+Get a job template ID by name
+
+	:param name: the name of the job template ID
+*/
+func (s SemaphoreConnection) JobTemplateByName(name string) (JobTemplate, error) {
+	var job JobTemplate
+	jobs, err := s.GetAllTemplates()
+	if err != nil {
+		return job, err
+	}
+
+	for i := range jobs {
+		if jobs[i].Name == name {
+			return job, nil
+		}
+	}
+	return job, &SemaphoreClientError{Msg: "Job with name" + name + "not found"}
 }
 
 /*
