@@ -49,7 +49,7 @@ func NewSockMessage(target string, method string, arg string) SockMessage {
 
 func Marshal(v SockMessage) string {
 	var msg string
-	msg = fmt.Sprintf("%s,%s,%s,%s", SockMsgVers, v.Target, v.Method, v.Arg)
+	msg = fmt.Sprintf("%s!SPLIT!%s!SPLIT!%s!SPLIT!%s", SockMsgVers, v.Target, v.Method, v.Arg)
 	msgStr := base64.RawStdEncoding.EncodeToString([]byte(msg))
 	return msgStr
 }
@@ -58,7 +58,7 @@ func Unmarshal(b string, v *SockMessage) error {
 	if err != nil {
 		return err // make custom error TODO
 	}
-	msgArr := strings.Split(string(msgBuf), ",")
+	msgArr := strings.Split(string(msgBuf), "!SPLIT!")
 	if len(msgArr) != 4 {
 		log.Fatal(len(msgArr), "bad message array")
 	}
