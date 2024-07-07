@@ -39,13 +39,28 @@ type NewTemplateRequest struct {
 }
 
 type JobTemplate struct {
-	Id            string `json:"id"`
+	Id            int    `json:"id"`
 	ProjectId     int    `json:"project_id"`
 	Name          string `json:"name"`
 	InventoryId   int    `json:"inventory_id"`
 	RepositoryId  int    `json:"repository_id"`
 	EnvironmentId int    `json:"environment_id"`
 	Playbook      string `json:"playbook"`
+}
+
+type StartTaskRequest struct {
+	TemplateID int `json:"template_id"`
+	ProjectId  int `json:"project_id"`
+}
+type StartTaskResponse struct {
+	Id          int    `json:"id"`
+	TemplateID  int    `json:"template_id"`
+	Debug       bool   `json:"debug"`
+	DryRun      bool   `json:"dry_run"`
+	Diff        bool   `json:"diff"`
+	Playbook    string `json:"playbook"`
+	Environment string `json:"environment"`
+	Limit       string `json:"limit"`
 }
 
 type ProjectsResponse struct {
@@ -294,6 +309,10 @@ Create a new 'Project' in Semaphore
 	:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
 func (s SemaphoreConnection) NewProject(name string) error {
+	_, err := s.GetProjectByName(name)
+	if err == nil {
+		return nil // return nil of project already exists
+	}
 	var b []byte
 	newProj := NewProjectReqeust{
 		Name:             name,
@@ -301,7 +320,7 @@ func (s SemaphoreConnection) NewProject(name string) error {
 		AlertChat:        "",
 		MaxParallelTasks: 0,
 	}
-	b, err := json.Marshal(&newProj)
+	b, err = json.Marshal(&newProj)
 	if err != nil {
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
@@ -353,6 +372,40 @@ Generic POST Request to sent to the Semaphore server
 	:param path: the path to the API to POST. Preceeding slashes will be trimmed
 	:param body: an io.Reader implementer to use as the POST body. Must comply with application/json Content-Type
 */
+func (s SemaphoreConnection) Put(path string, body io.Reader) ([]byte, error) {
+	var b []byte
+	apikey, err := s.Keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
+	if err != nil {
+		return b, &SemaphoreClientError{Msg: err.Error()}
+	}
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s://%s/%s", s.HttpProto, s.ServerUrl, strings.TrimPrefix(path, "/")), body)
+	if err != nil {
+		return b, &SemaphoreClientError{Msg: err.Error()}
+	}
+	req.Header.Add("Authorization", apikey.Prepare())
+	req.Header.Add("Content-Type", "application/json")
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return b, &SemaphoreClientError{Msg: err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+
+		return b, &SemaphoreClientError{Msg: resp.Status}
+	}
+	b, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return b, &SemaphoreClientError{Msg: err.Error()}
+	}
+	return b, nil
+}
+
+/*
+Generic POST Request to sent to the Semaphore server
+
+	:param path: the path to the API to POST. Preceeding slashes will be trimmed
+	:param body: an io.Reader implementer to use as the POST body. Must comply with application/json Content-Type
+*/
 func (s SemaphoreConnection) Post(path string, body io.Reader) ([]byte, error) {
 	var b []byte
 	apikey, err := s.Keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
@@ -364,7 +417,6 @@ func (s SemaphoreConnection) Post(path string, body io.Reader) ([]byte, error) {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
 	req.Header.Add("Authorization", apikey.Prepare())
-	fmt.Printf("called from inside semaphore: %s", apikey.GetSecret())
 	req.Header.Add("Content-Type", "application/json")
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -493,7 +545,11 @@ Add an inventory to semaphore
 
 	:param hosts: a list of IP addresses to add to the inventory
 */
-func (s SemaphoreConnection) AddInventory(hosts []string) error {
+func (s SemaphoreConnection) AddInventory(hosts []string, name string) error {
+	_, err := s.GetInventoryByName(name)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "Inventory Exists! Please update rather than create a new."}
+	}
 	sshKeyId, err := s.GetKeyId(keytags.VPS_SSH_KEY_KEYNAME)
 	if err != nil {
 		return err
@@ -508,7 +564,7 @@ func (s SemaphoreConnection) AddInventory(hosts []string) error {
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
 	body := NewInventoryRequest{
-		Name:        YosaiServerInventory,
+		Name:        name,
 		ProjectId:   s.ProjectId,
 		Inventory:   string(b),
 		SshKeyId:    sshKeyId,
@@ -527,17 +583,18 @@ func (s SemaphoreConnection) AddInventory(hosts []string) error {
 Get Inventory by name and return its ID
 :param name: the name of the inventory to find
 */
-func (s SemaphoreConnection) GetInventoryId(name string) (int, error) {
+func (s SemaphoreConnection) GetInventoryByName(name string) (InventoryResponse, error) {
+	var out InventoryResponse
 	resp, err := s.GetAllInventories()
 	if err != nil {
-		return 0, err
+		return out, err
 	}
 	for i := range resp {
 		if resp[i].Name == name {
-			return resp[i].Id, nil
+			return resp[i], nil
 		}
 	}
-	return 0, &KeyNotFound{Keyname: name}
+	return out, &KeyNotFound{Keyname: name}
 
 }
 
@@ -556,6 +613,96 @@ func (s SemaphoreConnection) GetAllInventories() ([]InventoryResponse, error) {
 		return resp, &SemaphoreClientError{Msg: err.Error()}
 	}
 	return resp, nil
+}
+
+/*
+Update an inventory
+*/
+func (s SemaphoreConnection) UpdateInventory(name string, inv YamlInventory) error {
+	sshKeyId, err := s.GetKeyId(keytags.VPS_SSH_KEY_KEYNAME)
+	if err != nil {
+		return err
+	}
+	becomeKeyId, err := s.GetKeyId(keytags.VPS_SUDO_USER_KEYNAME)
+	if err != nil {
+		return err
+	}
+	b, err := yaml.Marshal(inv)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "Error unmarshalling YAML inventory payload: " + err.Error()}
+	}
+	targetInv, err := s.GetInventoryByName(name)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "Target inventory: " + name + " was not found."}
+	}
+	body := InventoryResponse{
+		Id:          targetInv.Id,
+		Name:        name,
+		ProjectId:   s.ProjectId,
+		Inventory:   string(b),
+		SshKeyId:    sshKeyId,
+		BecomeKeyId: becomeKeyId,
+		Type:        "static-yaml",
+	}
+	req, err := json.Marshal(body)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "There was an error marshalling the JSON payload: " + err.Error()}
+	}
+	_, err = s.Put(fmt.Sprintf("%s/%v/inventory/%v", ProjectPath, s.ProjectId, targetInv.Id), bytes.NewReader(req))
+	return err
+
+}
+
+/*
+Remove host from an inventory
+*/
+func (s SemaphoreConnection) RemoveHostFromInv(name string, host ...string) error {
+	resp, err := s.GetInventoryByName(name)
+	if err != nil {
+		return err
+	}
+	var inv YamlInventory
+	err = yaml.Unmarshal([]byte(resp.Inventory), &inv)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "Error unmarshalling inventory from server: " + resp.Inventory + err.Error()}
+	}
+	for i := range host {
+		_, ok := inv.All.Hosts[host[i]]
+		if !ok {
+			return &SemaphoreClientError{Msg: "Host: " + host[i] + " not found in the inventory: " + resp.Inventory}
+		}
+		delete(inv.All.Hosts, host[i])
+	}
+	var hosts []string
+	for k := range inv.All.Hosts {
+		hosts = append(hosts, k)
+	}
+
+	return s.UpdateInventory(name, YamlInventoryBuilder(hosts))
+
+}
+
+/*
+Add hosts to inventory
+*/
+func (s SemaphoreConnection) AddHostToInv(name string, host ...string) error {
+
+	resp, err := s.GetInventoryByName(name)
+	if err != nil {
+		return err
+	}
+	var inv YamlInventory
+	err = yaml.Unmarshal([]byte(resp.Inventory), &inv)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "Error unmarshalling inventory from server: " + resp.Inventory + err.Error()}
+	}
+
+	var hosts []string
+	for k := range inv.All.Hosts {
+		hosts = append(hosts, k)
+	}
+	hosts = append(hosts, host...)
+	return s.UpdateInventory(name, YamlInventoryBuilder(hosts))
 }
 
 /*
@@ -609,11 +756,16 @@ Add job template to the Yosai project on Semaphore
 :param repoName: the name of the repo that the playbook belongs to
 */
 func (s SemaphoreConnection) AddJobTemplate(playbook string, repoName string) error {
+	_, err := s.JobTemplateByName(YosaiVpnRotationJob)
+	if err == nil {
+		return nil // return nil because template exists
+
+	}
 	repoId, err := s.GetRepoByName(repoName)
 	if err != nil {
 		return err
 	}
-	InventoryId, err := s.GetInventoryId(YosaiServerInventory)
+	InventoryItem, err := s.GetInventoryByName(YosaiServerInventory)
 	if err != nil {
 		return err
 	}
@@ -624,7 +776,7 @@ func (s SemaphoreConnection) AddJobTemplate(playbook string, repoName string) er
 	templ := NewTemplateRequest{
 		ProjectId:     s.ProjectId,
 		Name:          YosaiVpnRotationJob,
-		InventoryId:   InventoryId,
+		InventoryId:   InventoryItem.Id,
 		RepositoryId:  repoId,
 		EnvironmentId: envId,
 		Playbook:      playbook,
@@ -643,13 +795,45 @@ func (s SemaphoreConnection) AddJobTemplate(playbook string, repoName string) er
 }
 
 /*
+Start a task in Semaphore by the template name
+
+	:param name: the name of the job template to start
+*/
+func (s SemaphoreConnection) StartJob(name string) (StartTaskResponse, error) {
+	var resp StartTaskResponse
+	template, err := s.JobTemplateByName(name)
+	if err != nil {
+		return resp, &SemaphoreClientError{Msg: "Could not start job template: " + name + "Error: " + err.Error()}
+	}
+	var jobReq StartTaskRequest
+	jobReq = StartTaskRequest{
+		TemplateID: template.Id,
+		ProjectId:  s.ProjectId,
+	}
+	b, err := json.Marshal(&jobReq)
+	if err != nil {
+		return resp, &SemaphoreClientError{Msg: "Couldnt marshal data into byte array: " + err.Error()}
+	}
+	rb, err := s.Post(fmt.Sprintf("%s/%v/tasks", ProjectPath, s.ProjectId), bytes.NewReader(b))
+	if err != nil {
+		return resp, err
+	}
+	err = json.Unmarshal(rb, &resp)
+	if err != nil {
+		return resp, &SemaphoreClientError{Msg: "Couldnt unmarshal the response from semaphore: " + err.Error()}
+	}
+	return resp, nil
+
+}
+
+/*
 Get a job template ID by name
 
 	:param name: the name of the job template ID
 */
 func (s SemaphoreConnection) GetAllTemplates() ([]JobTemplate, error) {
 	var jobs []JobTemplate
-	resp, err := s.Get(fmt.Sprintf("%s/%v/tasks", ProjectPath, s.ProjectId))
+	resp, err := s.Get(fmt.Sprintf("%s/%v/templates", ProjectPath, s.ProjectId))
 	if err != nil {
 		return jobs, err
 	}
@@ -679,16 +863,11 @@ func (s SemaphoreConnection) JobTemplateByName(name string) (JobTemplate, error)
 
 	for i := range jobs {
 		if jobs[i].Name == name {
-			return job, nil
+			return jobs[i], nil
 		}
 	}
 	return job, &SemaphoreClientError{Msg: "Job with name" + name + "not found"}
 }
-
-/*
-Bootstrap the Semaphore environment
-*/
-func (s SemaphoreConnection) Bootstrap() error { return nil }
 
 /*
 ##########################################################
@@ -749,7 +928,41 @@ func (s SemaphoreConnection) SemaphoreRouter(arg daemon.ActionIn) (daemon.Action
 				return out, err
 			}
 			return SemaphoreActionOut{Content: string(b)}, nil
+		case "templates":
+			templates, err := s.GetAllTemplates()
+			if err != nil {
+				return out, err
+			}
+			b, err := json.MarshalIndent(templates, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: string(b)}, nil
 		}
+	case "run":
+		job, err := s.StartJob(arg.Arg())
+		if err != nil {
+			return out, err
+		}
+		b, err := json.MarshalIndent(job, " ", "    ")
+		if err != nil {
+			return out, err
+		}
+		return SemaphoreActionOut{Content: string(b)}, nil
+	case "remove-hosts":
+		hosts := strings.Split(strings.Trim(arg.Arg(), ","), ",")
+		err := s.RemoveHostFromInv(YosaiServerInventory, hosts...)
+		if err != nil {
+			return out, err
+		}
+		return SemaphoreActionOut{Content: "Hosts: " + arg.Arg() + " Removed."}, nil
+	case "add-hosts":
+		hosts := strings.Split(strings.Trim(arg.Arg(), ","), ",")
+		err := s.AddHostToInv(YosaiServerInventory, hosts...)
+		if err != nil {
+			return out, err
+		}
+		return SemaphoreActionOut{Content: "Hosts: " + arg.Arg() + " Added."}, nil
 
 	}
 	return out, &daemon.InvalidAction{Msg: "Unresolved method!"}

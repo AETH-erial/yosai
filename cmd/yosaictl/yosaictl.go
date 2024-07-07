@@ -7,7 +7,8 @@ import (
 	"log"
 	"net"
 	"os"
-	"strings"
+
+	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 )
 
 const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
@@ -23,6 +24,13 @@ func reader(r io.Reader) {
 	}
 }
 func main() {
+	if len(os.Args) < 4 {
+		log.Fatal("Not enough arguments!")
+	}
+	var args []string
+	args = os.Args[1:]
+	msgPack := daemon.NewSockMessage(args[0], args[1], args[2])
+	data := daemon.Marshal(msgPack)
 
 	//conf := daemon.ReadConfig("./.config.json")
 
@@ -31,7 +39,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer conn.Close()
-	buf := bytes.NewBuffer([]byte(strings.Join(os.Args[1:], " ")))
+
+	buf := bytes.NewBuffer([]byte(data))
 	_, err = io.Copy(conn, buf)
 	if err != nil {
 		log.Fatal("write error:", err)

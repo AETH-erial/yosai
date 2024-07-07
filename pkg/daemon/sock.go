@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,51 @@ const (
 	Daemon    = "daemon"
 	Bootstrap = "bootstrap"
 )
+
+/*
+#########################################################
+######## PROTOCOL RELATED FUNCTIONS AND STRUCTS #########
+#########################################################
+*/
+const SockMsgVers = "v1"
+const VersPos = 0
+const TargetPos = 1
+const MethodPos = 2
+const ArgPos = 3
+
+type SockMessage struct {
+	Version string
+	Target  string
+	Method  string
+	Arg     string
+}
+
+func NewSockMessage(target string, method string, arg string) SockMessage {
+	return SockMessage{Target: target, Method: method, Arg: arg}
+}
+
+func Marshal(v SockMessage) string {
+	var msg string
+	msg = fmt.Sprintf("%s,%s,%s,%s", SockMsgVers, v.Target, v.Method, v.Arg)
+	msgStr := base64.RawStdEncoding.EncodeToString([]byte(msg))
+	return msgStr
+}
+func Unmarshal(b string, v *SockMessage) error {
+	msgBuf, err := base64.RawStdEncoding.DecodeString(b)
+	if err != nil {
+		return err // make custom error TODO
+	}
+	msgArr := strings.Split(string(msgBuf), ",")
+	if len(msgArr) != 4 {
+		log.Fatal(len(msgArr), "bad message array")
+	}
+	v.Version = msgArr[VersPos]
+	v.Target = msgArr[TargetPos]
+	v.Method = msgArr[MethodPos]
+	v.Arg = msgArr[ArgPos]
+	return nil
+
+}
 
 var Actions map[string]struct{} = map[string]struct{}{
 	Cloud:     struct{}{},
@@ -93,7 +139,7 @@ func (c *Context) Handle(conn net.Conn) {
 		c.Log(err.Error())
 		return
 	}
-	action, err := c.parseAction(b[0:nr])
+	action, err := c.parseAction(string(b[0:nr]))
 	if err != nil {
 		c.Log(err.Error())
 		return
@@ -171,29 +217,25 @@ Validate and parse a stream from the unix socket and return an Action
 
 	:param msg: a byte array with the action and arguments
 */
-func (c *Context) parseAction(msg []byte) (ActionIn, error) {
+func (c *Context) parseAction(msg string) (ActionIn, error) {
 	var action Action
 	c.Log("Recieved request to parse action. ", string(msg))
-	msgSplit := strings.Split(strings.Trim(string(msg), " "), " ")
-
-	if len(msgSplit) < 3 {
-		c.Log("Not enough arguments was passed to function call: ", fmt.Sprint(len(msgSplit)))
-		return action, &InvalidAction{Action: "None", Msg: "Not Enough Args."}
+	var sockMsg SockMessage
+	err := Unmarshal(msg, &sockMsg)
+	if err != nil {
+		return action, &InvalidAction{Msg: "Could not unmarshal the message." + err.Error()} // TODO: Make marshalling/unmarshalling errors
 	}
 
-	_, ok := Actions[msgSplit[0]]
+	_, ok := Actions[sockMsg.Target]
 	if !ok {
-		c.Log("Action not found: ", msgSplit[0])
-		return action, &InvalidAction{Action: msgSplit[0], Msg: "Action not resolveable."}
+		c.Log("Action not found: ", sockMsg.Target)
+		return action, &InvalidAction{Action: sockMsg.Target, Msg: "Action not resolveable."}
 	}
-	target := msgSplit[0]
-	method := msgSplit[1]
-	arg := msgSplit[2]
 
 	action = Action{
-		target: target,
-		method: method,
-		arg:    arg,
+		target: sockMsg.Target,
+		method: sockMsg.Method,
+		arg:    sockMsg.Arg,
 	}
 	return action, nil
 
