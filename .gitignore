@@ -30,3 +30,4 @@ build/*
 
 # ignoring config stuff
 .config.*
+*.tmpl.*

@@ -139,9 +139,12 @@ func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 	}
 	if len(a.Rungs) > 0 {
 		for i := range a.Rungs {
-			fmt.Println("trying to get key: " + name)
+			fmt.Println("trying to get key: " + name + " from: " + a.Rungs[i].Source())
 			key, err := a.Rungs[i].GetKey(name)
 			if err == nil {
+				if key.GetPublic() == "" || key.GetSecret() == "" {
+					continue
+				}
 				a.AddKey(name, key)
 				return key, nil
 			}

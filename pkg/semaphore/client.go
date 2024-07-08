@@ -23,6 +23,7 @@ const YosaiEnvironment = "VPN Server configuration environment variables"
 type SemaphoreConnection struct {
 	Client    *http.Client
 	Keyring   daemon.DaemonKeyRing
+	Config    daemon.Configuration
 	ServerUrl string
 	HttpProto string
 	ProjectId int
@@ -270,7 +271,7 @@ Create a new semaphore client
 		:param log: an io.Writer to write logfile to
 		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing) SemaphoreConnection {
+func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing, conf daemon.Configuration) SemaphoreConnection {
 	log.Write([]byte("Using HTTP mode: " + proto + "\n"))
 	client := &http.Client{}
 	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring}
@@ -290,6 +291,7 @@ func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.
 			HttpProto: proto,
 			ProjectId: id,
 			Keyring:   keyring,
+			Config:    conf,
 		}
 	}
 
@@ -299,6 +301,7 @@ func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.
 		HttpProto: proto,
 		ProjectId: id,
 		Keyring:   keyring,
+		Config:    conf,
 	}
 }
 

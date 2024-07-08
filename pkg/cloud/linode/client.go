@@ -76,6 +76,7 @@ type RegionResponseInner struct {
 }
 
 type NewLinodeBody struct {
+	Label          string   `json:"label"`
 	AuthorizedKeys []string `json:"authorized_keys"`
 	Booted         bool     `json:"booted"`
 	Image          string   `json:"image"`
@@ -87,10 +88,11 @@ type NewLinodeBody struct {
 type LinodeConnection struct {
 	Client  *http.Client
 	Keyring daemon.DaemonKeyRing
+	Config  daemon.Configuration
 }
 
 // Construct a NewLinodeBody struct for a CreateNewLinode call
-func NewLinodeBodyBuilder(image string, region string, linodeType string, keyring daemon.DaemonKeyRing) (NewLinodeBody, error) {
+func NewLinodeBodyBuilder(image string, region string, linodeType string, label string, keyring daemon.DaemonKeyRing) (NewLinodeBody, error) {
 	var newLnBody NewLinodeBody
 	rootPass, err := keyring.GetKey(keytags.VPS_ROOT_PASS_KEYNAME)
 	if err != nil {
@@ -100,8 +102,10 @@ func NewLinodeBodyBuilder(image string, region string, linodeType string, keyrin
 	if err != nil {
 		return newLnBody, &LinodeClientError{Msg: err.Error()}
 	}
+	fmt.Print(rootSshKey.GetPublic(), rootSshKey.GetSecret(), "\n")
 
 	return NewLinodeBody{AuthorizedKeys: []string{rootSshKey.GetPublic()},
+		Label:    label,
 		RootPass: rootPass.GetSecret(),
 		Booted:   true,
 		Image:    image,
@@ -231,7 +235,7 @@ func (ln LinodeConnection) CreateNewLinode(body NewLinodeBody) (GetLinodeRespons
 		return newLnResp, &LinodeClientError{Msg: err.Error()}
 	}
 	if resp.StatusCode != 200 {
-		return newLnResp, &LinodeClientError{Msg: resp.Status}
+		return newLnResp, &LinodeClientError{Msg: resp.Status + "\n" + string(b)}
 	}
 	err = json.Unmarshal(b, &newLnResp)
 	if err != nil {
@@ -368,6 +372,17 @@ func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOu
 			return LinodeActionOut{Content: "Linode: " + action.Arg() + " deleted successfully."}, nil
 
 		}
+	case "new":
+		fmt.Print(ln.Config.Image(), ln.Config.Region(), ln.Config.LinodeType(), "\n")
+		body, err := NewLinodeBodyBuilder(ln.Config.Image(), ln.Config.Region(), ln.Config.LinodeType(), action.Arg(), ln.Keyring)
+		if err != nil {
+			return out, &daemon.InvalidAction{Msg: "Could not create the payload for making a new VM: " + err.Error()}
+		}
+		resp, err := ln.CreateNewLinode(body)
+		if err != nil {
+			return out, &daemon.InvalidAction{Msg: "Error occured when cteating a new VM: " + err.Error()}
+		}
+		return LinodeActionOut{Content: "New server is provisioning. ID: " + fmt.Sprint(resp.Id)}, nil
 
 	}
 	return LinodeActionOut{Content: "Unresolved method."}, nil

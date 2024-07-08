@@ -110,6 +110,7 @@ type Context struct {
 	keyring  *ApiKeyRing
 	routes   map[string]func(args ActionIn) (ActionOut, error)
 	sockPath string
+	Config   *ConfigFromFile
 	rwBuffer bytes.Buffer
 	stream   io.Writer
 }
