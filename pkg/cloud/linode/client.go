@@ -386,7 +386,7 @@ func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOu
 			return LinodeActionOut{Content: string(b)}, nil
 
 		}
-	case "rm":
+	case "delete":
 		switch action.Arg() {
 		case "":
 			return out, &daemon.InvalidAction{Msg: "Not enough args passed."}
