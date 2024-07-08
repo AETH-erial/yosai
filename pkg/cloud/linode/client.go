@@ -352,12 +352,38 @@ func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOu
 				return out, err
 			}
 			return servers, nil
-		default:
-			server, err := ln.GetLinode(action.Arg())
+		case "images":
+			imgs, err := ln.GetImages()
 			if err != nil {
 				return out, err
 			}
-			return server, nil
+			b, err := json.MarshalIndent(imgs, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return LinodeActionOut{Content: string(b)}, nil
+		case "regions":
+
+			regions, err := ln.GetRegions()
+			if err != nil {
+				return out, err
+			}
+			b, err := json.MarshalIndent(regions, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return LinodeActionOut{Content: string(b)}, nil
+		case "types":
+
+			types, err := ln.GetTypes()
+			if err != nil {
+				return out, err
+			}
+			b, err := json.MarshalIndent(types, " ", "    ")
+			if err != nil {
+				return out, err
+			}
+			return LinodeActionOut{Content: string(b)}, nil
 
 		}
 	case "rm":
