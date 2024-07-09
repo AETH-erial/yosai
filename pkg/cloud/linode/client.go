@@ -399,7 +399,6 @@ func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOu
 
 		}
 	case "new":
-		fmt.Print(ln.Config.Image(), ln.Config.Region(), ln.Config.LinodeType(), "\n")
 		body, err := NewLinodeBodyBuilder(ln.Config.Image(), ln.Config.Region(), ln.Config.LinodeType(), action.Arg(), ln.Keyring)
 		if err != nil {
 			return out, &daemon.InvalidAction{Msg: "Could not create the payload for making a new VM: " + err.Error()}
@@ -408,6 +407,7 @@ func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOu
 		if err != nil {
 			return out, &daemon.InvalidAction{Msg: "Error occured when cteating a new VM: " + err.Error()}
 		}
+		ln.Config.SetVpnServer(resp.Ipv4[0])
 		return LinodeActionOut{Content: "New server is provisioning. ID: " + fmt.Sprint(resp.Id)}, nil
 
 	}

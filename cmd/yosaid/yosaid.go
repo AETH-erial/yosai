@@ -41,7 +41,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading env file: ", err)
 	}
-	conf := daemon.ReadConfig("./.config.json")
+	conf := daemon.ReadConfig(daemon.DefaultConfigLoc)
 	apikeyring := daemon.NewKeyRing()
 	// Here we are demonstrating how you add a key to a keyring, in this
 	// case it is the top level keyring.
@@ -67,5 +67,6 @@ func main() {
 	ctx.Register("config", conf.ConfigRouter)
 	ctx.Register("cloud", lnConn.LinodeRouter)
 	ctx.Register("ansible", semaphoreConn.SemaphoreRouter)
+	ctx.Register("daemon", ctx.DaemonRouter)
 	ctx.ListenAndServe()
 }

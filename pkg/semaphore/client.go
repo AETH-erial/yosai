@@ -64,6 +64,22 @@ type StartTaskResponse struct {
 	Limit       string `json:"limit"`
 }
 
+type AddEnvironmentRequest struct {
+	Name      string `json:"name"`
+	ProjectID int    `json:"project_id"`
+	Password  string `json:"password"`
+	JSON      string `json:"json"`
+	Env       string `json:"env"`
+}
+type EnvironmentResponse struct {
+	Id        int    `json:"id"`
+	Name      string `json:"name"`
+	ProjectID int    `json:"project_id"`
+	Password  string `json:"password"`
+	JSON      string `json:"json"`
+	Env       string `json:"env"`
+}
+
 type ProjectsResponse struct {
 	Id               int    `json:"id"`
 	Name             string `json:"name"`
@@ -548,9 +564,9 @@ Add an inventory to semaphore
 
 	:param hosts: a list of IP addresses to add to the inventory
 */
-func (s SemaphoreConnection) AddInventory(hosts []string, name string) error {
+func (s SemaphoreConnection) AddInventory(name string, hosts ...string) error {
 	_, err := s.GetInventoryByName(name)
-	if err != nil {
+	if err == nil { // Returning on nil error because that means the inventory exists
 		return &SemaphoreClientError{Msg: "Inventory Exists! Please update rather than create a new."}
 	}
 	sshKeyId, err := s.GetKeyId(keytags.VPS_SSH_KEY_KEYNAME)
@@ -744,13 +760,44 @@ func (s SemaphoreConnection) GetAllRepos() ([]NewRepoResponse, error) {
 }
 
 // Create an environment variable configuration, currently unimplemented
-func (s SemaphoreConnection) AddEnvironment(vars map[string]interface{}) error {
-	return nil
+func (s SemaphoreConnection) AddEnvironment() error {
+	_, err := s.GetEnvironmentId(YosaiEnvironment)
+	if err == nil {
+		return nil // environment exists, dont add another with same name
+	}
+	var body AddEnvironmentRequest
+	body = AddEnvironmentRequest{
+		Name:      YosaiEnvironment,
+		ProjectID: s.ProjectId,
+		JSON:      "{}",
+		Env:       "{}",
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "couldnt marshal the JSON payload"}
+	}
+	_, err = s.Post(fmt.Sprintf("%s/%v/environment", ProjectPath, s.ProjectId), bytes.NewBuffer(b))
+	return err
+
 }
 
-// Get an environment configuration ID by name. Currently statically return '8' as its the environment I created in semaphore
+// Get an environment configuration ID by name.
 func (s SemaphoreConnection) GetEnvironmentId(name string) (int, error) {
-	return 8, nil
+	var env []EnvironmentResponse
+	b, err := s.Get(fmt.Sprintf("%s/%v/environment", ProjectPath, s.ProjectId))
+	if err != nil {
+		return 0, err
+	}
+	err = json.Unmarshal(b, &env)
+	if err != nil {
+		return 0, &SemaphoreClientError{Msg: "Couldnt unmarshall the response"}
+	}
+	for i := range env {
+		if env[i].Name == name {
+			return env[i].Id, nil
+		}
+	}
+	return 0, &KeyNotFound{Keyname: "Couldnt find environment: " + name}
 }
 
 /*
@@ -889,18 +936,81 @@ Implementing the router interface
 func (s SemaphoreConnection) SemaphoreRouter(arg daemon.ActionIn) (daemon.ActionOut, error) {
 	var out SemaphoreActionOut
 	switch arg.Method() {
-	case "show":
+	case "bootstrap":
 		switch arg.Arg() {
 		case "keys":
-			keys, err := s.GetAllKeys()
+			gitSshKey, err := s.Keyring.GetKey(keytags.GIT_SSH_KEYNAME)
 			if err != nil {
 				return out, err
 			}
-			b, err := json.MarshalIndent(keys, " ", "    ")
+			vpsSshKey, err := s.Keyring.GetKey(keytags.VPS_SSH_KEY_KEYNAME)
 			if err != nil {
 				return out, err
 			}
-			return SemaphoreActionOut{Content: string(b)}, nil
+			vpsRootCred, err := s.Keyring.GetKey(keytags.VPS_ROOT_PASS_KEYNAME)
+			if err != nil {
+				return out, err
+			}
+			vpsSudoCred, err := s.Keyring.GetKey(keytags.VPS_SUDO_USER_KEYNAME)
+			if err != nil {
+				return out, err
+			}
+			err = s.AddKey(keytags.VPS_SUDO_USER_KEYNAME, s.NewKeyRequestBuilder(keytags.VPS_SUDO_USER_KEYNAME, "login_password", vpsSudoCred))
+			if err != nil {
+				return out, err
+			}
+			err = s.AddKey(keytags.GIT_SSH_KEYNAME, s.NewKeyRequestBuilder(keytags.GIT_SSH_KEYNAME, "ssh", gitSshKey))
+			if err != nil {
+				return out, err
+			}
+			err = s.AddKey(keytags.VPS_SSH_KEY_KEYNAME, s.NewKeyRequestBuilder(keytags.VPS_SSH_KEY_KEYNAME, "ssh",
+				daemon.SshKey{User: vpsRootCred.GetPublic(), PrivateKey: vpsSshKey.GetSecret()}))
+			if err != nil {
+				return out, err
+			}
+			err = s.AddKey(keytags.VPS_ROOT_PASS_KEYNAME, s.NewKeyRequestBuilder(keytags.VPS_ROOT_PASS_KEYNAME, "login_password", vpsRootCred))
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: "Keyring successfuly bootstrapped."}, nil
+		case "project":
+
+			err := s.NewProject(YosaiProject)
+			if err != nil {
+				return out, err
+			}
+			err = s.AddRepository(s.Config.Repo(), s.Config.Branch())
+			if err != nil {
+				return out, err
+			}
+			err = s.AddEnvironment()
+			if err != nil {
+				return out, err
+			}
+			err = s.AddJobTemplate(s.Config.PlaybookName(), fmt.Sprintf("%s:%s", s.Config.Repo(), s.Config.Branch()))
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: "Project successfuly bootstrapped."}, nil
+		case "inventory":
+			err := s.AddInventory(YosaiServerInventory, s.Config.VpnServer())
+			if err != nil {
+				return out, err
+			}
+			err = s.AddHostToInv(YosaiServerInventory, s.Config.VpnServer())
+			if err != nil {
+				return out, err
+			}
+			return SemaphoreActionOut{Content: "Inventory successfuly bootstrapped."}, nil
+		}
+	case "project-add":
+		err := s.NewProject(arg.Arg())
+		if err != nil {
+			return out, err
+		}
+		return SemaphoreActionOut{Content: "Project: " + arg.Arg() + " created."}, nil
+	case "show":
+		switch arg.Arg() {
 		case "projects":
 			proj, err := s.GetProjects()
 			if err != nil {
@@ -986,6 +1096,10 @@ type yamlInvAll struct {
 
 type yamlVars struct {
 	AnsibleSshCommonArgs string `yaml:"ansible_ssh_common_args"`
+	MachineType          string `yaml:"machine_type"`
+	MachineSubType       string `yaml:"machine_subtype"`
+	VpnNetworkAddress    string `yaml:"vpn_network_address"`
+	VpnServerPort        int    `yaml:"vpn_server_port"`
 }
 
 /*
@@ -997,7 +1111,12 @@ func YamlInventoryBuilder(hosts []string) YamlInventory {
 
 	hostmap := map[string]yamlVars{}
 	for i := range hosts {
-		hostmap[hosts[i]] = yamlVars{AnsibleSshCommonArgs: "-o StrictHostKeyChecking=no"}
+		hostmap[hosts[i]] = yamlVars{
+			AnsibleSshCommonArgs: "-o StrictHostKeyChecking=no",
+			MachineType:          "vpn",
+			MachineSubType:       "server",
+			VpnNetworkAddress:    "10.252.1.0/24",
+			VpnServerPort:        53280}
 	}
 	return YamlInventory{
 		All: yamlInvAll{

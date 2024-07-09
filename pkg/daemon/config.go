@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 
@@ -25,6 +26,8 @@ type Configuration interface {
 	SetImage(val string)
 	SetRegion(val string)
 	SetLinodeType(val string)
+	SetVpnServer(val string)
+	VpnServer() string
 	Repo() string
 	Branch() string
 	PlaybookName() string
@@ -120,6 +123,14 @@ func (c *ConfigFromFile) ConfigRouter(arg ActionIn) (ActionOut, error) {
 		case "linode_type":
 			c.SetLinodeType(v)
 			return ConfigurationActionOut{Config: "cloud.linode_type set to: " + v}, nil
+		case "vpn_server":
+			err := net.ParseIP(v)
+			if err == nil { // because a nil return equates to an invalid IP
+				return out, &InvalidAction{Msg: "Passed address: " + v + " is not a valid IPv4."}
+			}
+			c.SetVpnServer(v)
+			return ConfigurationActionOut{Config: "service.vpn_server set to: " + v}, nil
+
 		}
 	case "save":
 		err := c.Save(DefaultConfigLoc)
@@ -135,6 +146,7 @@ func (c *ConfigFromFile) ConfigRouter(arg ActionIn) (ActionOut, error) {
 type ConfigFromFile struct {
 	Cloud   cloudConfig   `json:"cloud"`
 	Ansible ansibleConfig `json:"ansible"`
+	Service serviceConfig `json:"service"`
 }
 
 type ansibleConfig struct {
@@ -143,12 +155,17 @@ type ansibleConfig struct {
 	PlaybookName string `json:"playbook_name"`
 }
 
+type serviceConfig struct {
+	VpnServer string `json:"vpn_server"`
+}
+
 func (c *ConfigFromFile) SetRepo(val string)         { c.Ansible.Repo = val }
 func (c *ConfigFromFile) SetBranch(val string)       { c.Ansible.Branch = val }
 func (c *ConfigFromFile) SetPlaybookName(val string) { c.Ansible.PlaybookName = val }
 func (c *ConfigFromFile) SetImage(val string)        { c.Cloud.Image = val }
 func (c *ConfigFromFile) SetRegion(val string)       { c.Cloud.Region = val }
 func (c *ConfigFromFile) SetLinodeType(val string)   { c.Cloud.LinodeType = val }
+func (c *ConfigFromFile) SetVpnServer(val string)    { c.Service.VpnServer = val }
 
 func (c *ConfigFromFile) Repo() string {
 	return c.Ansible.Repo
@@ -176,6 +193,10 @@ func (c *ConfigFromFile) Region() string {
 
 func (c *ConfigFromFile) LinodeType() string {
 	return c.Cloud.LinodeType
+}
+
+func (c *ConfigFromFile) VpnServer() string {
+	return c.Service.VpnServer
 }
 
 func ReadConfig(path string) Configuration {
