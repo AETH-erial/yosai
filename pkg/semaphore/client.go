@@ -23,6 +23,7 @@ const YosaiEnvironment = "VPN Server configuration environment variables"
 type SemaphoreConnection struct {
 	Client    *http.Client
 	Keyring   daemon.DaemonKeyRing
+	KeyTagger keytags.Keytagger
 	Config    daemon.Configuration
 	ServerUrl string
 	HttpProto string
@@ -145,6 +146,10 @@ func (a AddKeyRequest) Prepare() string {
 	return string(b)
 }
 
+func (a AddKeyRequest) GetType() string {
+	return a.Type
+}
+
 type KeyItemResponse struct {
 	Id            int           `json:"id"`
 	Name          string        `json:"name"`
@@ -187,6 +192,9 @@ func (k KeyItemResponse) GetSecret() string {
 func (k KeyItemResponse) Prepare() string {
 	return k.Type
 }
+func (k KeyItemResponse) GetType() string {
+	return k.Type
+}
 
 type loginPassword struct {
 	Password string `json:"password"`
@@ -209,7 +217,7 @@ func (s SemaphoreConnection) GetKey(name string) (daemon.Key, error) {
 	var key KeyItemResponse
 	keys, err := s.GetAllKeys()
 	if err != nil {
-		return key, err
+		return key, daemon.KeyRingError
 	}
 	for i := range keys {
 		if keys[i].Name == name {
@@ -217,7 +225,7 @@ func (s SemaphoreConnection) GetKey(name string) (daemon.Key, error) {
 		}
 	}
 
-	return key, &KeyNotFound{Keyname: name}
+	return key, daemon.KeyNotFound
 
 }
 
@@ -233,6 +241,7 @@ func (s SemaphoreConnection) AddKey(name string, key daemon.Key) error {
 	if err == nil { // return if the key exists
 		return nil
 	}
+	fmt.Println(string(key.Prepare()))
 	path := fmt.Sprintf("%s/%v/keys", ProjectPath, s.ProjectId)
 	_, err = s.Post(path, bytes.NewReader([]byte(key.Prepare())))
 	if err != nil {
@@ -255,11 +264,11 @@ func (s SemaphoreConnection) Source() string {
 }
 
 // NewKeyRequest builder function
-func (s SemaphoreConnection) NewKeyRequestBuilder(name string, keytype string, key daemon.Key) daemon.Key {
-	if keytype == "ssh" {
+func (s SemaphoreConnection) NewKeyRequestBuilder(name string, key daemon.Key) daemon.Key {
+	if key.GetType() == "ssh" {
 		return AddKeyRequest{
 			Name:      name,
-			Type:      keytype,
+			Type:      key.GetType(),
 			ProjectId: s.ProjectId,
 			Ssh: sshKeyAdd{
 				Login:      key.GetPublic(),
@@ -269,7 +278,7 @@ func (s SemaphoreConnection) NewKeyRequestBuilder(name string, keytype string, k
 	} else {
 		return AddKeyRequest{
 			Name:      name,
-			Type:      keytype,
+			Type:      key.GetType(),
 			ProjectId: s.ProjectId,
 			LoginPassword: loginPassword{
 				Login:    key.GetPublic(),
@@ -287,10 +296,10 @@ Create a new semaphore client
 		:param log: an io.Writer to write logfile to
 		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing, conf daemon.Configuration) SemaphoreConnection {
+func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing, conf daemon.Configuration, keytagger keytags.Keytagger) SemaphoreConnection {
 	log.Write([]byte("Using HTTP mode: " + proto + "\n"))
 	client := &http.Client{}
-	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring}
+	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring, KeyTagger: keytagger}
 
 	id, err := semaphoreBootstrap.GetProjectByName(YosaiProject)
 	if err != nil {
@@ -308,6 +317,7 @@ func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.
 			ProjectId: id,
 			Keyring:   keyring,
 			Config:    conf,
+			KeyTagger: keytagger,
 		}
 	}
 
@@ -318,6 +328,7 @@ func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.
 		ProjectId: id,
 		Keyring:   keyring,
 		Config:    conf,
+		KeyTagger: keytagger,
 	}
 }
 
@@ -362,7 +373,7 @@ func (s SemaphoreConnection) AddRepository(giturl string, branch string) error {
 	if err == nil { // return if the repo exists
 		return nil
 	}
-	sshKeyId, err := s.GetKeyId(keytags.GIT_SSH_KEYNAME)
+	sshKeyId, err := s.GetKeyId(s.KeyTagger.GitSshKeyname())
 	if err != nil {
 		return err
 	}
@@ -393,7 +404,7 @@ Generic POST Request to sent to the Semaphore server
 */
 func (s SemaphoreConnection) Put(path string, body io.Reader) ([]byte, error) {
 	var b []byte
-	apikey, err := s.Keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
+	apikey, err := s.Keyring.GetKey(s.KeyTagger.SemaphoreApiKeyname())
 	if err != nil {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
@@ -427,7 +438,7 @@ Generic POST Request to sent to the Semaphore server
 */
 func (s SemaphoreConnection) Post(path string, body io.Reader) ([]byte, error) {
 	var b []byte
-	apikey, err := s.Keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
+	apikey, err := s.Keyring.GetKey(s.KeyTagger.SemaphoreApiKeyname())
 	if err != nil {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
@@ -442,13 +453,13 @@ func (s SemaphoreConnection) Post(path string, body io.Reader) ([]byte, error) {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-
-		return b, &SemaphoreClientError{Msg: resp.Status}
-	}
 	b, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return b, &SemaphoreClientError{Msg: err.Error()}
+	}
+	if resp.StatusCode >= 400 {
+		fmt.Println(string(b))
+		return b, &SemaphoreClientError{Msg: resp.Status}
 	}
 	return b, nil
 
@@ -461,7 +472,7 @@ Agnostic GET method for calling the upstream Semaphore server
 */
 func (s SemaphoreConnection) Get(path string) ([]byte, error) {
 	var b []byte
-	apiKey, err := s.Keyring.GetKey(keytags.SEMAPHORE_API_KEYNAME)
+	apiKey, err := s.Keyring.GetKey(s.KeyTagger.SemaphoreApiKeyname())
 	if err != nil {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
@@ -569,15 +580,19 @@ func (s SemaphoreConnection) AddInventory(name string, hosts ...string) error {
 	if err == nil { // Returning on nil error because that means the inventory exists
 		return &SemaphoreClientError{Msg: "Inventory Exists! Please update rather than create a new."}
 	}
-	sshKeyId, err := s.GetKeyId(keytags.VPS_SSH_KEY_KEYNAME)
+	sshKeyId, err := s.GetKeyId(s.KeyTagger.VpsSvcAccSshPubkeySeed())
 	if err != nil {
 		return err
 	}
-	becomeKeyId, err := s.GetKeyId(keytags.VPS_SUDO_USER_KEYNAME)
+	becomeKeyId, err := s.GetKeyId(s.KeyTagger.VpsSvcAccKeyname())
 	if err != nil {
 		return err
 	}
-	inv := YamlInventoryBuilder(hosts)
+	pubkey, err := s.Keyring.GetKey(s.KeyTagger.WgClientKeypairKeyname())
+	if err != nil {
+		return &SemaphoreClientError{Msg: err.Error() + s.KeyTagger.WgClientKeypairKeyname()}
+	}
+	inv := s.YamlInventoryBuilder(hosts, pubkey.GetPublic())
 	b, err := yaml.Marshal(inv)
 	if err != nil {
 		return &SemaphoreClientError{Msg: err.Error()}
@@ -638,11 +653,11 @@ func (s SemaphoreConnection) GetAllInventories() ([]InventoryResponse, error) {
 Update an inventory
 */
 func (s SemaphoreConnection) UpdateInventory(name string, inv YamlInventory) error {
-	sshKeyId, err := s.GetKeyId(keytags.VPS_SSH_KEY_KEYNAME)
+	sshKeyId, err := s.GetKeyId(s.KeyTagger.VpsSvcAccSshPubkeySeed())
 	if err != nil {
 		return err
 	}
-	becomeKeyId, err := s.GetKeyId(keytags.VPS_SUDO_USER_KEYNAME)
+	becomeKeyId, err := s.GetKeyId(s.KeyTagger.VpsSvcAccKeyname())
 	if err != nil {
 		return err
 	}
@@ -692,12 +707,16 @@ func (s SemaphoreConnection) RemoveHostFromInv(name string, host ...string) erro
 		}
 		delete(inv.All.Hosts, host[i])
 	}
+	pubkey, err := s.Keyring.GetKey(s.KeyTagger.WgClientKeypairKeyname())
+	if err != nil {
+		return &SemaphoreClientError{Msg: err.Error() + s.KeyTagger.WgClientKeypairKeyname()}
+	}
 	var hosts []string
 	for k := range inv.All.Hosts {
 		hosts = append(hosts, k)
 	}
 
-	return s.UpdateInventory(name, YamlInventoryBuilder(hosts))
+	return s.UpdateInventory(name, s.YamlInventoryBuilder(hosts, pubkey.GetPublic()))
 
 }
 
@@ -715,13 +734,17 @@ func (s SemaphoreConnection) AddHostToInv(name string, host ...string) error {
 	if err != nil {
 		return &SemaphoreClientError{Msg: "Error unmarshalling inventory from server: " + resp.Inventory + err.Error()}
 	}
+	pubkey, err := s.Keyring.GetKey(s.KeyTagger.WgClientKeypairKeyname())
+	if err != nil {
+		return &SemaphoreClientError{Msg: err.Error() + s.KeyTagger.WgClientKeypairKeyname()}
+	}
 
 	var hosts []string
 	for k := range inv.All.Hosts {
 		hosts = append(hosts, k)
 	}
 	hosts = append(hosts, host...)
-	return s.UpdateInventory(name, YamlInventoryBuilder(hosts))
+	return s.UpdateInventory(name, s.YamlInventoryBuilder(hosts, pubkey.GetPublic()))
 }
 
 /*
@@ -939,38 +962,19 @@ func (s SemaphoreConnection) SemaphoreRouter(arg daemon.ActionIn) (daemon.Action
 	case "bootstrap":
 		switch arg.Arg() {
 		case "keys":
-			gitSshKey, err := s.Keyring.GetKey(keytags.GIT_SSH_KEYNAME)
-			if err != nil {
-				return out, err
-			}
-			vpsSshKey, err := s.Keyring.GetKey(keytags.VPS_SSH_KEY_KEYNAME)
-			if err != nil {
-				return out, err
-			}
-			vpsRootCred, err := s.Keyring.GetKey(keytags.VPS_ROOT_PASS_KEYNAME)
-			if err != nil {
-				return out, err
-			}
-			vpsSudoCred, err := s.Keyring.GetKey(keytags.VPS_SUDO_USER_KEYNAME)
-			if err != nil {
-				return out, err
-			}
-			err = s.AddKey(keytags.VPS_SUDO_USER_KEYNAME, s.NewKeyRequestBuilder(keytags.VPS_SUDO_USER_KEYNAME, "login_password", vpsSudoCred))
-			if err != nil {
-				return out, err
-			}
-			err = s.AddKey(keytags.GIT_SSH_KEYNAME, s.NewKeyRequestBuilder(keytags.GIT_SSH_KEYNAME, "ssh", gitSshKey))
-			if err != nil {
-				return out, err
-			}
-			err = s.AddKey(keytags.VPS_SSH_KEY_KEYNAME, s.NewKeyRequestBuilder(keytags.VPS_SSH_KEY_KEYNAME, "ssh",
-				daemon.SshKey{User: vpsRootCred.GetPublic(), PrivateKey: vpsSshKey.GetSecret()}))
-			if err != nil {
-				return out, err
-			}
-			err = s.AddKey(keytags.VPS_ROOT_PASS_KEYNAME, s.NewKeyRequestBuilder(keytags.VPS_ROOT_PASS_KEYNAME, "login_password", vpsRootCred))
-			if err != nil {
-				return out, err
+			reqKeys := s.KeyTagger.GetAnsibleKeys()
+			for i := range reqKeys {
+				kn := reqKeys[i]
+				key, err := s.Keyring.GetKey(kn)
+				if err != nil {
+					fmt.Println("error occured when trying to get key")
+					return out, err
+				}
+				err = s.AddKey(kn, s.NewKeyRequestBuilder(kn, key))
+				if err != nil {
+					fmt.Println("error occured when adding key")
+					return out, err
+				}
 			}
 			return SemaphoreActionOut{Content: "Keyring successfuly bootstrapped."}, nil
 		case "project":
@@ -1100,6 +1104,8 @@ type yamlVars struct {
 	MachineSubType       string `yaml:"machine_subtype"`
 	VpnNetworkAddress    string `yaml:"vpn_network_address"`
 	VpnServerPort        int    `yaml:"vpn_server_port"`
+	ClientPubkey         string `yaml:"client_public_key"`
+	ClientVpnAddress     string `yaml:"client_vpn_address"`
 }
 
 /*
@@ -1107,7 +1113,7 @@ YAML inventory builder function
 
 	:param hosts: a list of host IP addresses to add to the VPN server inventory
 */
-func YamlInventoryBuilder(hosts []string) YamlInventory {
+func (s SemaphoreConnection) YamlInventoryBuilder(hosts []string, clientPubkey string) YamlInventory {
 
 	hostmap := map[string]yamlVars{}
 	for i := range hosts {
@@ -1115,8 +1121,10 @@ func YamlInventoryBuilder(hosts []string) YamlInventory {
 			AnsibleSshCommonArgs: "-o StrictHostKeyChecking=no",
 			MachineType:          "vpn",
 			MachineSubType:       "server",
-			VpnNetworkAddress:    "10.252.1.0/24",
-			VpnServerPort:        53280}
+			VpnNetworkAddress:    s.Config.VpnServerNetwork(),
+			VpnServerPort:        53280,
+			ClientPubkey:         clientPubkey,
+			ClientVpnAddress:     s.Config.VpnClientIpAddr()}
 	}
 	return YamlInventory{
 		All: yamlInvAll{

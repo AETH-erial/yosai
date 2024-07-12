@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +65,13 @@ func (v VaultResponse) Prepare() string {
 }
 
 /*
+Implementing the daemon.Key interface and returning the keys 'type'
+*/
+func (v VaultResponse) GetType() string {
+	return v.Data.Data.Type
+}
+
+/*
 Retrieve a key from hashicorp. the 2nd argument, 'name' is the path of the secret in hashicorp
 
 	:param keyring: a daemon.DaemonKeyRing interface that will have the hashicorp API key
@@ -91,7 +97,7 @@ func (v VaultConnection) GetKey(name string) (daemon.Key, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return vaultResp, errors.New(resp.Status)
+		return vaultResp, daemon.KeyNotFound
 	}
 
 	b, err := io.ReadAll(resp.Body)

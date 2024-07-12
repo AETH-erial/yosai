@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -17,9 +19,10 @@ var EnvironmentVariables = []string{
 	"SEMAPHORE_SERVER_URL",
 }
 
-const DefaultConfigLoc = "./config.json"
+const DefaultConfigLoc = "./.config.json"
 
 type Configuration interface {
+	SetServerName(val string)
 	SetRepo(val string)
 	SetBranch(val string)
 	SetPlaybookName(val string)
@@ -27,7 +30,14 @@ type Configuration interface {
 	SetRegion(val string)
 	SetLinodeType(val string)
 	SetVpnServer(val string)
+	SetVpnServerId(val int)
+	SetVpnNetwork(val string) error
+	VpnClientIpAddr() string
+	VpnServerIpAddr() string
+	VpnServerNetwork() string
+	VpnServerId() int
 	VpnServer() string
+	ServerName() string
 	Repo() string
 	Branch() string
 	PlaybookName() string
@@ -88,6 +98,8 @@ func BlankEnv(path string) error {
 func (c *ConfigFromFile) ConfigRouter(arg ActionIn) (ActionOut, error) {
 	var out ConfigurationActionOut
 	switch arg.Method() {
+	case "show":
+		return ConfigurationActionOut{Config: c.VpnServer()}, nil
 	case "all":
 
 		var out ConfigurationActionOut
@@ -130,7 +142,22 @@ func (c *ConfigFromFile) ConfigRouter(arg ActionIn) (ActionOut, error) {
 			}
 			c.SetVpnServer(v)
 			return ConfigurationActionOut{Config: "service.vpn_server set to: " + v}, nil
-
+		case "vpn_server_id":
+			vint, err := strconv.Atoi(v)
+			if err != nil {
+				return out, &InvalidAction{Msg: "Invalid VPN server ID. Must be an int"}
+			}
+			c.SetVpnServerId(int(vint))
+			return ConfigurationActionOut{Config: "service.vpn_server_id set to: " + v}, nil
+		case "server_name":
+			c.SetServerName(v)
+			return ConfigurationActionOut{Config: "service.server_name set to: " + v}, nil
+		case "vpn_network":
+			err := c.SetVpnNetwork(v)
+			if err != nil {
+				return out, &InvalidAction{Msg: "Couldnt parse the passed address: " + v}
+			}
+			return ConfigurationActionOut{Config: fmt.Sprintf("service.vpn_network: %s\nservice.vpn_client_ipv4: %s\nservice.vpn_server_ipv4: %s", c.VpnServerNetwork(), c.VpnClientIpAddr(), c.VpnServerIpAddr())}, nil
 		}
 	case "save":
 		err := c.Save(DefaultConfigLoc)
@@ -156,7 +183,12 @@ type ansibleConfig struct {
 }
 
 type serviceConfig struct {
-	VpnServer string `json:"vpn_server"`
+	VpnServer        string `json:"vpn_server"`
+	VpnServerId      int    `json:"vpn_server_id"`
+	VpnServerName    string `json:"vpn_server_name"`
+	VpnServerNetwork string `json:"vpn_server_network"`
+	VpnServerIPv4    string `json:"vpn_server_ipv4"`
+	VpnClientIPv4    string `json:"vpn_client_ipv4"`
 }
 
 func (c *ConfigFromFile) SetRepo(val string)         { c.Ansible.Repo = val }
@@ -166,6 +198,24 @@ func (c *ConfigFromFile) SetImage(val string)        { c.Cloud.Image = val }
 func (c *ConfigFromFile) SetRegion(val string)       { c.Cloud.Region = val }
 func (c *ConfigFromFile) SetLinodeType(val string)   { c.Cloud.LinodeType = val }
 func (c *ConfigFromFile) SetVpnServer(val string)    { c.Service.VpnServer = val }
+func (c *ConfigFromFile) SetVpnServerId(val int)     { c.Service.VpnServerId = val }
+func (c *ConfigFromFile) SetServerName(val string)   { c.Service.VpnServerName = val }
+func (c *ConfigFromFile) SetVpnNetwork(val string) error {
+	addr, ntwrk, err := net.ParseCIDR(val)
+	if err != nil {
+		return err
+	}
+	ntwrkSp := strings.Split(ntwrk.String(), "/")
+	cidr := ntwrkSp[1]
+	parsed, _ := netip.ParseAddr(addr.String())
+	clientIp := parsed.Next()
+	serverIp := clientIp.Next()
+
+	c.Service.VpnServerNetwork = ntwrk.String()
+	c.Service.VpnServerIPv4 = serverIp.String() + "/" + cidr
+	c.Service.VpnClientIPv4 = clientIp.String() + "/" + cidr
+	return nil
+}
 
 func (c *ConfigFromFile) Repo() string {
 	return c.Ansible.Repo
@@ -194,9 +244,25 @@ func (c *ConfigFromFile) Region() string {
 func (c *ConfigFromFile) LinodeType() string {
 	return c.Cloud.LinodeType
 }
+func (c *ConfigFromFile) VpnServerId() int {
+	return c.Service.VpnServerId
+}
 
 func (c *ConfigFromFile) VpnServer() string {
 	return c.Service.VpnServer
+}
+
+func (c *ConfigFromFile) ServerName() string {
+	return c.Service.VpnServerName
+}
+func (c *ConfigFromFile) VpnServerIpAddr() string {
+	return c.Service.VpnServerIPv4
+}
+func (c *ConfigFromFile) VpnClientIpAddr() string {
+	return c.Service.VpnClientIPv4
+}
+func (c *ConfigFromFile) VpnServerNetwork() string {
+	return c.Service.VpnServerNetwork
 }
 
 func ReadConfig(path string) Configuration {

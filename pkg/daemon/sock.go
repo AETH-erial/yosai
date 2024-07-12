@@ -19,7 +19,7 @@ const LogMsgTempl = "YOSAI Daemon ||| time: %s ||| %s\n"
 const (
 	Cloud     = "cloud"
 	Ansible   = "ansible"
-	Keys      = "key"
+	Keys      = "keyring"
 	Config    = "config"
 	Daemon    = "daemon"
 	Bootstrap = "bootstrap"
@@ -110,7 +110,7 @@ type Context struct {
 	keyring  *ApiKeyRing
 	routes   map[string]func(args ActionIn) (ActionOut, error)
 	sockPath string
-	Config   *ConfigFromFile
+	Config   Configuration
 	rwBuffer bytes.Buffer
 	stream   io.Writer
 }
@@ -175,7 +175,7 @@ func (c *Context) handleSyscalls() {
 /*
 Open a daemon context pointer
 */
-func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing) *Context {
+func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configuration) *Context {
 
 	sock, err := net.Listen("unix", path)
 	if err != nil {
@@ -183,7 +183,7 @@ func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing) *Context {
 	}
 	routes := map[string]func(args ActionIn) (ActionOut, error){}
 	buf := make([]byte, 1024)
-	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring, routes: routes}
+	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring, routes: routes, Config: conf}
 
 }
 

@@ -2,8 +2,23 @@ package daemon
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"log"
 	"net/url"
+	"strings"
+
+	"git.aetherial.dev/aeth/yosai/pkg/keytags"
+)
+
+const (
+	SSH_KEY            = "ssh"
+	API_KEY            = "api_key"
+	BEARER_AUTH        = "bearer_auth"
+	CLIENT_CREDENTIALS = "client_credentials"
+	BASIC_AUTH         = "basic_auth"
+	LOGIN_CRED         = "login_password"
+	WIREGUARD          = "wireguard"
 )
 
 type KeyGetterActionOut struct {
@@ -13,6 +28,24 @@ type KeyGetterActionOut struct {
 
 func (k KeyGetterActionOut) GetResult() string {
 	return fmt.Sprintf("Public: %s\nPrivate: %s\n", k.Public, k.Private)
+}
+
+type WireguardKeypair struct {
+	PrivateKey string
+	PublicKey  string
+}
+
+func (w WireguardKeypair) GetPublic() string {
+	return w.PublicKey
+}
+func (w WireguardKeypair) GetSecret() string {
+	return w.PrivateKey
+}
+func (w WireguardKeypair) Prepare() string {
+	return ""
+}
+func (w WireguardKeypair) GetType() string {
+	return WIREGUARD
 }
 
 type VpsRootUser struct {
@@ -52,6 +85,10 @@ func (b BearerAuth) GetResult() string {
 	return fmt.Sprintf("Public: %s\nSecret: %s\n", b.GetPublic(), b.GetSecret())
 }
 
+func (b BearerAuth) GetType() string {
+	return BEARER_AUTH
+}
+
 type BasicAuth struct {
 	Username string // Username for basic auth
 	Password string // subsequent password for basic auth
@@ -77,6 +114,10 @@ Return the private data for this auth type
 */
 func (b BasicAuth) GetSecret() string {
 	return b.Password
+}
+
+func (b BasicAuth) GetType() string {
+	return BASIC_AUTH
 }
 
 type ClientCredentials struct {
@@ -105,6 +146,9 @@ func (c ClientCredentials) GetPublic() string {
 func (c ClientCredentials) GetSecret() string {
 	return c.ClientSecret
 }
+func (c ClientCredentials) GetType() string {
+	return CLIENT_CREDENTIALS
+}
 
 type SshKey struct {
 	User       string
@@ -119,6 +163,9 @@ func (s SshKey) GetSecret() string {
 }
 func (s SshKey) Prepare() string {
 	return s.PrivateKey
+}
+func (s SshKey) GetType() string {
+	return SSH_KEY
 }
 
 type ApiKeyRing struct {
@@ -141,17 +188,26 @@ func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 		for i := range a.Rungs {
 			fmt.Println("trying to get key: " + name + " from: " + a.Rungs[i].Source())
 			key, err := a.Rungs[i].GetKey(name)
-			if err == nil {
-				if key.GetPublic() == "" || key.GetSecret() == "" {
+			if err != nil {
+				if errors.Is(err, KeyNotFound) {
 					continue
 				}
-				a.AddKey(name, key)
-				return key, nil
+				if errors.Is(err, KeyRingError) {
+					return key, err
+				}
+				log.Fatal("Ungraceful shutdown. unhandled error within keyring: ", err)
+
 			}
+
+			if key.GetPublic() == "" || key.GetSecret() == "" {
+				continue
+			}
+			a.AddKey(name, key)
+			return key, nil
 
 		}
 	}
-	return key, &KeyNotFound{Name: name}
+	return key, KeyNotFound
 }
 
 /*
@@ -163,7 +219,7 @@ Add a key to the daemon keyring
 func (a *ApiKeyRing) AddKey(name string, key Key) error {
 	_, ok := a.Keys[name]
 	if ok {
-		return &KeyExists{Name: name}
+		return KeyExists
 	}
 	a.Keys[name] = key
 	return nil
@@ -224,6 +280,23 @@ func (a *ApiKeyRing) KeyringRouter(arg ActionIn) (ActionOut, error) {
 			return out, nil
 
 		}
+	case "bootstrap":
+		err := a.Bootstrap(keytags.ConstKeytag{})
+		if err != nil {
+			return out, err
+		}
+		return KeyGetterActionOut{Public: "Keyring successfully bootstrapped."}, nil
+	case "add-keypair":
+		argSp := strings.Split(arg.Arg(), ",")
+		if len(argSp) != 2 {
+			return out, &InvalidAction{Msg: "You must pass the keypair comma-delimited. Like: <PUBLICKEY>,<PRIVATEKEY>"}
+		}
+		err := a.AddKey(keytags.ConstKeytag{}.WgClientKeypairKeyname(), WireguardKeypair{PublicKey: argSp[0], PrivateKey: argSp[1]})
+		if err != nil {
+			return out, &InvalidAction{Msg: "Error adding your key to the keyring: " + err.Error()}
+		}
+		return KeyGetterActionOut{Public: argSp[0], Private: argSp[1]}, nil
+
 	}
 	return out, &InvalidAction{Msg: "No method resolved!"}
 }
@@ -231,7 +304,18 @@ func (a *ApiKeyRing) KeyringRouter(arg ActionIn) (ActionOut, error) {
 /*
 Bootstrap the keyring
 */
-func (a *ApiKeyRing) Bootstrap() error { return nil }
+func (a *ApiKeyRing) Bootstrap(keytagger keytags.Keytagger) error {
+	allkeytags := keytagger.AllKeys()
+	for i := range allkeytags {
+		kn := allkeytags[i]
+		_, err := a.GetKey(kn)
+		if err != nil {
+			return &KeyringBootstrapError{Msg: "Key with keytag: " + kn + " was not found on any of the daemon Keyring rungs."}
+		}
+	}
+	return nil
+
+}
 
 /*
 
@@ -254,6 +338,7 @@ type Key interface {
 	Prepare() string
 	GetPublic() string // Get the public identifier of the key, i.e. the username, or client id, etc.
 	GetSecret() string // Get the private/secret data, i.e. the password, API key, client secret, etc
+	GetType() string   // Returns the type of key. I.e. API_KEY, SSH_KEY, BASIC_AUTH, etc
 }
 
 /*
@@ -264,18 +349,16 @@ type Key interface {
 
 */
 
-type KeyNotFound struct {
-	Name string
+var (
+	KeyNotFound  = errors.New("Key not found.")
+	KeyExists    = errors.New("Key exists.")
+	KeyRingError = errors.New("Unexpected error from child keyrung")
+)
+
+type KeyringBootstrapError struct {
+	Msg string
 }
 
-func (k *KeyNotFound) Error() string {
-	return fmt.Sprintf("Key with name '%s' was not found in the daemon keyring", k.Name)
-}
-
-type KeyExists struct {
-	Name string
-}
-
-func (k *KeyExists) Error() string {
-	return fmt.Sprintf("Key with name '%s' already exists in the keyring", k.Name)
+func (k *KeyringBootstrapError) Error() string {
+	return fmt.Sprintf("There was a fatal error bootstrapping the keyring: %s", k.Msg)
 }

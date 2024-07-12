@@ -86,9 +86,10 @@ type NewLinodeBody struct {
 }
 
 type LinodeConnection struct {
-	Client  *http.Client
-	Keyring daemon.DaemonKeyRing
-	Config  daemon.Configuration
+	Client    *http.Client
+	Keyring   daemon.DaemonKeyRing
+	KeyTagger keytags.Keytagger
+	Config    daemon.Configuration
 }
 
 // Construct a NewLinodeBody struct for a CreateNewLinode call
@@ -207,6 +208,26 @@ func (ln LinodeConnection) ListLinodes() (GetAllLinodes, error) {
 }
 
 /*
+Get linode by IP Address
+
+	:param addr: the IPv4 address of your linode
+*/
+func (ln LinodeConnection) GetByIp(addr string) (GetLinodeResponse, error) {
+	var out GetLinodeResponse
+	servers, err := ln.ListLinodes()
+	if err != nil {
+		return out, err
+	}
+	for i := range servers.Data {
+		if servers.Data[i].Ipv4[0] == addr {
+			return servers.Data[i], nil
+		}
+	}
+	return out, &LinodeClientError{Msg: "Linode with Address of: " + addr + " not found."}
+
+}
+
+/*
 Create a new linode instance
 
 	    :param keyring: a daemon.DaemonKeyRing implementer that can return a linode API key
@@ -218,7 +239,7 @@ func (ln LinodeConnection) CreateNewLinode(body NewLinodeBody) (GetLinodeRespons
 	if err != nil {
 		return newLnResp, err
 	}
-	apiKey, err := ln.Keyring.GetKey(keytags.LINODE_API_KEYNAME)
+	apiKey, err := ln.Keyring.GetKey(ln.KeyTagger.LinodeApiKeyname())
 	if err != nil {
 		return newLnResp, &LinodeClientError{Msg: err.Error()}
 	}
@@ -270,7 +291,7 @@ Agnostic GET method for calling the upstream linode server
 */
 func (ln LinodeConnection) Get(path string) ([]byte, error) {
 	var b []byte
-	apiKey, err := ln.Keyring.GetKey(keytags.LINODE_API_KEYNAME)
+	apiKey, err := ln.Keyring.GetKey(ln.KeyTagger.LinodeApiKeyname())
 	if err != nil {
 		return b, &LinodeClientError{Msg: err.Error()}
 	}
@@ -300,7 +321,7 @@ Agnostic DELETE method for deleting a resource from Linode
 */
 func (ln LinodeConnection) Delete(path string) ([]byte, error) {
 	var b []byte
-	apiKey, err := ln.Keyring.GetKey(keytags.LINODE_API_KEYNAME)
+	apiKey, err := ln.Keyring.GetKey(ln.KeyTagger.LinodeApiKeyname())
 	if err != nil {
 		return b, &LinodeClientError{Msg: err.Error()}
 	}
@@ -408,6 +429,7 @@ func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOu
 			return out, &daemon.InvalidAction{Msg: "Error occured when cteating a new VM: " + err.Error()}
 		}
 		ln.Config.SetVpnServer(resp.Ipv4[0])
+		ln.Config.SetVpnServerId(resp.Id)
 		return LinodeActionOut{Content: "New server is provisioning. ID: " + fmt.Sprint(resp.Id)}, nil
 
 	}

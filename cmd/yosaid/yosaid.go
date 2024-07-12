@@ -48,22 +48,28 @@ func main() {
 	apikeyring.AddKey(keytags.HASHICORP_VAULT_KEYNAME, daemon.BearerAuth{
 		Secret: os.Getenv(keytags.HASHICORP_VAULT_KEYNAME),
 	})
-	apikeyring.AddKey(keytags.SEMAPHORE_API_KEYNAME, daemon.BearerAuth{Secret: os.Getenv(keytags.SEMAPHORE_API_KEYNAME)})
-
-	// creating the connection client with Hashicorp vault, and using the keyring we created above
-	// as this clients keyring. This allows the API key we added earlier to be used when calling the API
 	hashiConn := hashicorp.VaultConnection{
 		VaultUrl:  os.Getenv("HASHICORP_VAULT_URL"),
 		HttpProto: "https",
 		KeyRing:   apikeyring,
 		Client:    &http.Client{},
 	}
-	lnConn := linode.LinodeConnection{Client: &http.Client{}, Keyring: apikeyring, Config: conf}
-	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring, conf)
-	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
-	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring)
-	ctx.Register("key", apikeyring.KeyringRouter)
+	err = apikeyring.Bootstrap(keytags.ConstKeytag{})
+	if err != nil {
+		log.Fatal(err)
+
+	}
+	fmt.Println("finished bootstrappin")
+	// creating the connection client with Hashicorp vault, and using the keyring we created above
+	// as this clients keyring. This allows the API key we added earlier to be used when calling the API
+	lnConn := linode.LinodeConnection{Client: &http.Client{}, Keyring: apikeyring, Config: conf, KeyTagger: keytags.ConstKeytag{}}
+	fmt.Println("made linode connection")
+	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring, conf, keytags.ConstKeytag{})
+	fmt.Println("made semaphore connection")
+	//	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
+	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf)
+	ctx.Register("keyring", apikeyring.KeyringRouter)
 	ctx.Register("config", conf.ConfigRouter)
 	ctx.Register("cloud", lnConn.LinodeRouter)
 	ctx.Register("ansible", semaphoreConn.SemaphoreRouter)
