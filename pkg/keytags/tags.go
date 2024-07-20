@@ -46,6 +46,7 @@ func (c ConstKeytag) AllKeys() []string {
 		c.VpsSvcAccSshKeyname(),
 		c.SemaphoreApiKeyname(),
 		c.GitSshKeyname(),
+		c.WgClientKeypairKeyname(),
 	}
 }
 

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
@@ -28,6 +30,13 @@ type SemaphoreConnection struct {
 	ServerUrl string
 	HttpProto string
 	ProjectId int
+}
+
+type TaskOutput struct {
+	TaskID int       `json:"task_id"`
+	Task   string    `json:"task"`
+	Time   time.Time `json:"time"`
+	Output string    `json:"output"`
 }
 
 type NewTemplateRequest struct {
@@ -571,6 +580,25 @@ func (s SemaphoreConnection) GetKeyId(keyname string) (int, error) {
 }
 
 /*
+Get the output of a task
+
+	:param taskId: the ID of the task that was ran
+*/
+func (s SemaphoreConnection) GetTaskOutput(taskId int) ([]TaskOutput, error) {
+	var taskout []TaskOutput
+	b, err := s.Get(fmt.Sprintf("%s/%v/tasks/%v/output", ProjectPath, s.ProjectId, taskId))
+	if err != nil {
+		return taskout, err
+	}
+	err = json.Unmarshal(b, &taskout)
+	if err != nil {
+		return taskout, &SemaphoreClientError{Msg: "Could not unmarshall the response from getting task output." + err.Error()}
+	}
+	return taskout, nil
+
+}
+
+/*
 Add an inventory to semaphore
 
 	:param hosts: a list of IP addresses to add to the inventory
@@ -1013,6 +1041,20 @@ func (s SemaphoreConnection) SemaphoreRouter(arg daemon.ActionIn) (daemon.Action
 			return out, err
 		}
 		return SemaphoreActionOut{Content: "Project: " + arg.Arg() + " created."}, nil
+	case "show-task":
+		taskid, err := strconv.Atoi(arg.Arg())
+		if err != nil {
+			return out, err
+		}
+		taskout, err := s.GetTaskOutput(taskid)
+		if err != nil {
+			return out, err
+		}
+		b, err := json.MarshalIndent(taskout, " ", "    ")
+		if err != nil {
+			return out, err
+		}
+		return SemaphoreActionOut{Content: string(b)}, nil
 	case "show":
 		switch arg.Arg() {
 		case "projects":
@@ -1106,6 +1148,7 @@ type yamlVars struct {
 	VpnServerPort        int    `yaml:"vpn_server_port"`
 	ClientPubkey         string `yaml:"client_public_key"`
 	ClientVpnAddress     string `yaml:"client_vpn_address"`
+	SecretsProvider      string `yaml:"secrets_provider"`
 }
 
 /*
@@ -1124,7 +1167,8 @@ func (s SemaphoreConnection) YamlInventoryBuilder(hosts []string, clientPubkey s
 			VpnNetworkAddress:    s.Config.VpnServerNetwork(),
 			VpnServerPort:        53280,
 			ClientPubkey:         clientPubkey,
-			ClientVpnAddress:     s.Config.VpnClientIpAddr()}
+			ClientVpnAddress:     s.Config.VpnClientIpAddr(),
+			SecretsProvider:      "hashicorp"}
 	}
 	return YamlInventory{
 		All: yamlInvAll{

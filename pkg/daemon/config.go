@@ -99,8 +99,6 @@ func (c *ConfigFromFile) ConfigRouter(arg ActionIn) (ActionOut, error) {
 	var out ConfigurationActionOut
 	switch arg.Method() {
 	case "show":
-		return ConfigurationActionOut{Config: c.VpnServer()}, nil
-	case "all":
 
 		var out ConfigurationActionOut
 		b, err := json.MarshalIndent(&c, "", "   ")

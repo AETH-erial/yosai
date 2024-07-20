@@ -118,7 +118,7 @@ Add the root users for your VPS to Hashicorp vault
 */
 func (v VaultConnection) AddKey(name string, key daemon.Key) error {
 	body := VaultAdd{
-		Data: map[string]string{key.GetPublic(): key.GetSecret()},
+		Data: map[string]string{"public": key.GetPublic(), "secret": key.GetSecret(), "type": key.GetType()},
 	}
 	b, err := json.Marshal(&body)
 	if err != nil {
