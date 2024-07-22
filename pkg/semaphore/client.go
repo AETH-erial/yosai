@@ -1064,7 +1064,7 @@ Router for handling all stuff relating to Projects
 
 	:param msg: a daemon.SockMessage with request info
 */
-func (s SemaphoreConnection) projectHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) ProjectHandler(msg daemon.SockMessage) daemon.SockMessage {
 	switch msg.Method {
 	case "bootstrap":
 		return s.projectBootstrapper()
@@ -1101,7 +1101,7 @@ handler to wrap all functions relating to Tasks
 
 	:param msg: a daemon.SockMessage that contains the request information
 */
-func (s SemaphoreConnection) taskHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) TaskHandler(msg daemon.SockMessage) daemon.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
@@ -1140,9 +1140,10 @@ func (s SemaphoreConnection) taskHandler(msg daemon.SockMessage) daemon.SockMess
 
 /*
 Handles all of the requests relating to Hosts
-    :param msg: a daemon.SockMessage containing all of the request info
+
+	:param msg: a daemon.SockMessage containing all of the request info
 */
-func (s SemaphoreConnection) hostHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) HostHandler(msg daemon.SockMessage) daemon.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
@@ -1155,7 +1156,7 @@ func (s SemaphoreConnection) hostHandler(msg daemon.SockMessage) daemon.SockMess
 		if err != nil {
 			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgRequest, []byte("Host: " + hosts + " added to the inventory")) 
+		return *daemon.NewSockMessage(daemon.MsgRequest, []byte(fmt.Sprintf("Host: %v added to the inventory", hosts)))
 
 	case "delete":
 		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
@@ -1163,24 +1164,30 @@ func (s SemaphoreConnection) hostHandler(msg daemon.SockMessage) daemon.SockMess
 		if err != nil {
 			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgRequest, []byte("Host: " + hosts + " removed from the inventory")) 
-		}
+		return *daemon.NewSockMessage(daemon.MsgRequest, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
+	default:
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+	}
 }
 
 /*
 Implementing the router interface
+
+	:param msg: a daemon.SockMessage containing the request data
 */
 func (s SemaphoreConnection) SemaphoreRouter(msg daemon.SockMessage) daemon.SockMessage {
 	switch msg.Target {
 	case "bootstrap":
 		return s.BootstrapHandler(msg)
 	case "project":
-		return s.projectHandler(msg)
+		return s.ProjectHandler(msg)
 	case "task":
-		return s.taskHandler(msg)
+		return s.TaskHandler(msg)
 	case "hosts":
-		return s.hostHandler(msg)
-
+		return s.HostHandler(msg)
+	default:
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+	}
 }
 
 /*

@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -44,7 +43,7 @@ type Configuration interface {
 	Image() string
 	Region() string
 	LinodeType() string
-	ConfigRouter(arg ActionIn) (ActionOut, error)
+	ConfigRouter(msg SockMessage) SockMessage
 	Save(path string) error
 }
 
@@ -101,77 +100,18 @@ func BlankEnv(path string) error {
 }
 
 // Implemeting the interface to make this callable via the CLI
-func (c *ConfigFromFile) ConfigRouter(arg ActionIn) (ActionOut, error) {
-	var out ConfigurationActionOut
-	switch arg.Method() {
+func (c *ConfigFromFile) ConfigRouter(msg SockMessage) SockMessage {
+	switch msg.Method {
 	case "show":
 
-		var out ConfigurationActionOut
 		b, err := json.MarshalIndent(&c, "", "   ")
 		if err != nil {
-			return out, err
+			return *NewSockMessage(MsgResponse, []byte(err.Error()))
 		}
-		out = ConfigurationActionOut{Config: string(b)}
-		return out, nil
-	case "set":
-		kv := strings.Split(arg.Arg(), "=")
-		if len(kv) < 2 {
-			return out, &InvalidAction{Msg: "Please pass configuration in the form of 'val'='key'"}
-		}
-		k := kv[0]
-		v := kv[1]
-		switch k {
-		case "repo_url":
-			c.SetRepo(v)
-			return ConfigurationActionOut{Config: "ansible.repo_url set to: " + v}, nil
-		case "branch":
-			c.SetBranch(v)
-			return ConfigurationActionOut{Config: "ansible.branch set to: " + v}, nil
-		case "playbook_name":
-			c.SetPlaybookName(v)
-			return ConfigurationActionOut{Config: "ansible.playbook_name set to: " + v}, nil
-		case "image":
-			c.SetImage(v)
-			return ConfigurationActionOut{Config: "cloud.image set to: " + v}, nil
-		case "region":
-			c.SetRegion(v)
-			return ConfigurationActionOut{Config: "cloud.region set to: " + v}, nil
-		case "linode_type":
-			c.SetLinodeType(v)
-			return ConfigurationActionOut{Config: "cloud.linode_type set to: " + v}, nil
-		case "vpn_server":
-			err := net.ParseIP(v)
-			if err == nil { // because a nil return equates to an invalid IP
-				return out, &InvalidAction{Msg: "Passed address: " + v + " is not a valid IPv4."}
-			}
-			c.SetVpnServer(v)
-			return ConfigurationActionOut{Config: "service.vpn_server set to: " + v}, nil
-		case "vpn_server_id":
-			vint, err := strconv.Atoi(v)
-			if err != nil {
-				return out, &InvalidAction{Msg: "Invalid VPN server ID. Must be an int"}
-			}
-			c.SetVpnServerId(int(vint))
-			return ConfigurationActionOut{Config: "service.vpn_server_id set to: " + v}, nil
-		case "server_name":
-			c.SetServerName(v)
-			return ConfigurationActionOut{Config: "service.server_name set to: " + v}, nil
-		case "vpn_network":
-			err := c.SetVpnNetwork(v)
-			if err != nil {
-				return out, &InvalidAction{Msg: "Couldnt parse the passed address: " + v}
-			}
-			return ConfigurationActionOut{Config: fmt.Sprintf("service.vpn_network: %s\nservice.vpn_client_ipv4: %s\nservice.vpn_server_ipv4: %s", c.VpnServerNetwork(), c.VpnClientIpAddr(), c.VpnServerIpAddr())}, nil
-		}
-	case "save":
-		err := c.Save(DefaultConfigLoc)
-		if err != nil {
-			return out, err
-
-		}
-		return ConfigurationActionOut{Config: "Configuration was saved to disk."}, nil
+		return *NewSockMessage(MsgResponse, b)
+	default:
+		return *NewSockMessage(MsgResponse, []byte("Unresolved Method"))
 	}
-	return out, &InvalidAction{Msg: "unresolved action was passed.", Action: arg.Method()}
 }
 
 type ConfigFromFile struct {

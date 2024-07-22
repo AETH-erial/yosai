@@ -22,7 +22,7 @@ const LogMsgTempl = "YOSAI Daemon ||| time: %s ||| %s\n"
 */
 const SockMsgVers = 2
 const MESSAGE_RECIEVED = "MSG_RECV"
-const UnresolveableRequest = "UNRESOLVEABLE"
+const UNRESOLVEABLE = "UNRESOLVEABLE"
 const RequestOk = "OK"
 
 /*
@@ -51,7 +51,7 @@ type SockMessage struct {
 	Method     string `json:"method"`  // This is the method that we will be executing on the target endpoint. Think of this like the HTTP method
 }
 
-func NewSockMessage(msgType string, body []byte) *SockMessage {
+func NewSockMessage(msgType string, body []byte) *SockMessage { // TODO: this function needs to be more versatile, and allow for additional more arguments
 	return &SockMessage{Target: "",
 		Method:     "",
 		Body:       body,
@@ -67,7 +67,7 @@ Takes in a SockMessage struct and serializes it so that it can be sent over a so
 
 	:param v: a SockMessage to serialize for transportation
 */
-func Marshal(v SockMessage) []byte {
+func Marshal(v SockMessage) []byte { // TODO: Need to clean up the error handling here. This is really brittle. I just wanted to get it working
 	msgHeader := []byte{}
 	msgHeaderBuf := bytes.NewBuffer(msgHeader)
 	err := binary.Write(msgHeaderBuf, binary.LittleEndian, int8(SockMsgVers))
@@ -254,7 +254,7 @@ func (c *Context) resolveRoute(req SockMessage) SockMessage {
 	handlerFunc, ok := c.routes[req.Target]
 	if !ok {
 		err := &InvalidAction{Msg: "Invalid Action", Action: req.Target}
-		return SockMessage{StatusMsg: UnresolveableRequest, Body: []byte(err.Error())}
+		return SockMessage{StatusMsg: UNRESOLVEABLE, Body: []byte(err.Error())}
 	}
 	return handlerFunc(req)
 

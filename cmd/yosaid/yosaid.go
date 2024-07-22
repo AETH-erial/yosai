@@ -67,12 +67,15 @@ func main() {
 	fmt.Println("made linode connection")
 	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring, conf, keytags.ConstKeytag{})
 	fmt.Println("made semaphore connection")
-	//	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
+	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf)
-	//	ctx.Register("keyring", apikeyring.KeyringRouter)
-	//	ctx.Register("config", conf.ConfigRouter)
+	//	ctx.Register("keyring", apikeyring.KeyringRouter) //TODO: fix the keyring router to implement the right shit
+	ctx.Register("config", conf.ConfigRouter)
 	ctx.Register("cloud", lnConn.LinodeRouter)
 	ctx.Register("ansible", semaphoreConn.BootstrapHandler)
-	//	ctx.Register("daemon", ctx.DaemonRouter)
+	ctx.Register("ansible-hosts", semaphoreConn.HostHandler)
+	ctx.Register("ansible-projects", semaphoreConn.ProjectHandler)
+	ctx.Register("ansible-job", semaphoreConn.TaskHandler)
+	//	ctx.Register("daemon", ctx.DaemonRouter) // TODO: fix the daemon keyring router so it also can be used as a server route
 	ctx.ListenAndServe()
 }

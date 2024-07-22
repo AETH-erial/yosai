@@ -9,10 +9,50 @@ import (
 	"net"
 	"os"
 
+	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 )
 
 const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
+
+/*
+Build a JSON request to send the yosaid daemon
+
+	    :param v: a struct to serialize for a request
+		:param value: a string to put into the request
+*/
+func jsonBuilder(v interface{}, value string) []byte {
+	addLn, ok := v.(linode.AddLinodeRequest)
+	if ok {
+		addLn = linode.AddLinodeRequest{
+			Name: value,
+		}
+		b, _ := json.Marshal(addLn)
+		return b
+
+	}
+	delLn, ok := v.(linode.DeleteLinodeRequest)
+	if ok {
+		delLn = linode.DeleteLinodeRequest{
+			Id: value,
+		}
+		b, _ := json.Marshal(delLn)
+		return b
+
+	}
+	semReq, ok := v.(semaphore.SemaphoreRequest)
+	if ok {
+		semReq = semaphore.SemaphoreRequest{
+			Target: value,
+		}
+		b, _ := json.Marshal(semReq)
+		return b
+
+	}
+	return []byte("{\"data\":\"test\"}")
+
+}
 
 func reader(r io.Reader) {
 	buf := make([]byte, 1024)
@@ -32,13 +72,31 @@ func main() {
 	}
 	var args []string
 	args = os.Args[1:]
+	var rb = bytes.NewBuffer([]byte{})
+	switch args[0] {
+	case "cloud":
+		switch args[1] {
+		case "delete":
+			rb.Write(jsonBuilder(linode.DeleteLinodeRequest{}, args[2]))
+		case "add":
+			rb.Write(jsonBuilder(linode.AddLinodeRequest{}, args[2]))
+		}
+	case "ansible-hosts":
+		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
+	case "ansible-job":
+		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
+	case "ansible-projects":
+		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
+	case "ansible":
+		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
+	}
 
 	msg := daemon.Marshal(daemon.SockMessage{
 		Type:       daemon.MsgRequest,
 		StatusMsg:  "",
 		StatusCode: 0,
 		Version:    daemon.SockMsgVers,
-		Body:       []byte(args[2]),
+		Body:       rb.Bytes(),
 		Target:     args[0],
 		Method:     args[1],
 	})

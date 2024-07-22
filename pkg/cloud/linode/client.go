@@ -400,6 +400,8 @@ func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockM
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
 	}
+	ln.Config.SetVpnServer(resp.Ipv4[0])
+	ln.Config.SetVpnServerId(resp.Id)
 	b, _ := json.Marshal(resp)
 	return *daemon.NewSockMessage(daemon.MsgResponse, b)
 
@@ -422,7 +424,7 @@ func (ln LinodeConnection) LinodeRouter(msg daemon.SockMessage) daemon.SockMessa
 		return *daemon.NewSockMessage(daemon.MsgResponse, b)
 	case "delete":
 		return ln.DeleteLinodeHandler(msg)
-	case "create":
+	case "add":
 		return ln.AddLinodeHandler(msg)
 	}
 	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Action"))
