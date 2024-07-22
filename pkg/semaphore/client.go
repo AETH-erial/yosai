@@ -972,159 +972,215 @@ func (s SemaphoreConnection) JobTemplateByName(name string) (JobTemplate, error)
 
 /*
 ##########################################################
-######## IMPLEMENTING daemon.ActionIn INTERFACE ##########
+################## DAEMON ROUTE HANDLERS #################
 ##########################################################
 */
-type SemaphoreActionOut struct {
-	Content string
+
+type SemaphoreRequest struct {
+	Target string `json:"target"`
 }
 
-func (s SemaphoreActionOut) GetResult() string { return s.Content }
+/*
+Wrapping the functioanlity of the keyring bootstrapper for top level cleanliness
+*/
+func (s SemaphoreConnection) keyBootstrapper() daemon.SockMessage {
+	reqKeys := s.KeyTagger.GetAnsibleKeys()
+	for i := range reqKeys {
+		kn := reqKeys[i]
+		key, err := s.Keyring.GetKey(kn)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		err = s.AddKey(kn, s.NewKeyRequestBuilder(kn, key))
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Daemon keyring successfuly bootstrapped."))
+}
+
+/*
+Wrapping the functionality of the Project bootstrapper for top level cleanliness
+*/
+func (s SemaphoreConnection) projectBootstrapper() daemon.SockMessage {
+	err := s.NewProject(YosaiProject)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	err = s.AddRepository(s.Config.Repo(), s.Config.Branch())
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	err = s.AddEnvironment()
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	err = s.AddJobTemplate(s.Config.PlaybookName(), fmt.Sprintf("%s:%s", s.Config.Repo(), s.Config.Branch()))
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Project successfuly bootstrapped."))
+
+}
+
+/*
+Wrapping the inventory bootstrap functionality for top level cleanliness
+*/
+func (s SemaphoreConnection) inventoryBootstrapper() daemon.SockMessage {
+	err := s.AddInventory(YosaiServerInventory, s.Config.VpnServer())
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	err = s.AddHostToInv(YosaiServerInventory, s.Config.VpnServer())
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Inventory successfuly bootstrapped."))
+
+}
+
+func (s SemaphoreConnection) BootstrapHandler(msg daemon.SockMessage) daemon.SockMessage {
+	var req SemaphoreRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	switch req.Target {
+	case "keys":
+		return s.keyBootstrapper()
+	case "project":
+		return s.projectBootstrapper()
+	case "inventory":
+		return s.inventoryBootstrapper()
+	default:
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+
+	}
+
+}
+
+/*
+Router for handling all stuff relating to Projects
+
+	:param msg: a daemon.SockMessage with request info
+*/
+func (s SemaphoreConnection) projectHandler(msg daemon.SockMessage) daemon.SockMessage {
+	switch msg.Method {
+	case "bootstrap":
+		return s.projectBootstrapper()
+	case "add":
+		var req SemaphoreRequest
+		err := json.Unmarshal(msg.Body, &req)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		err = s.NewProject(req.Target)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Project: "+req.Target+" successfully added."))
+	case "show":
+		proj, err := s.GetProjects()
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		b, err := json.MarshalIndent(proj, " ", "    ")
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+	default:
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+
+	}
+
+}
+
+/*
+handler to wrap all functions relating to Tasks
+
+	:param msg: a daemon.SockMessage that contains the request information
+*/
+func (s SemaphoreConnection) taskHandler(msg daemon.SockMessage) daemon.SockMessage {
+	var req SemaphoreRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	switch msg.Method {
+	case "run":
+		resp, err := s.StartJob(req.Target)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		b, err := json.MarshalIndent(resp, " ", "    ")
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+	case "show":
+		taskid, err := strconv.Atoi(req.Target)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		taskout, err := s.GetTaskOutput(taskid)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		b, err := json.MarshalIndent(taskout, " ", "    ")
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+	default:
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+
+	}
+}
+
+/*
+Handles all of the requests relating to Hosts
+    :param msg: a daemon.SockMessage containing all of the request info
+*/
+func (s SemaphoreConnection) hostHandler(msg daemon.SockMessage) daemon.SockMessage {
+	var req SemaphoreRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	switch msg.Method {
+	case "add":
+		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
+		err := s.AddHostToInv(YosaiServerInventory, hosts...)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgRequest, []byte("Host: " + hosts + " added to the inventory")) 
+
+	case "delete":
+		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
+		err := s.RemoveHostFromInv(YosaiServerInventory, hosts...)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgRequest, []byte("Host: " + hosts + " removed from the inventory")) 
+		}
+}
 
 /*
 Implementing the router interface
 */
-func (s SemaphoreConnection) SemaphoreRouter(arg daemon.ActionIn) (daemon.ActionOut, error) {
-	var out SemaphoreActionOut
-	switch arg.Method() {
+func (s SemaphoreConnection) SemaphoreRouter(msg daemon.SockMessage) daemon.SockMessage {
+	switch msg.Target {
 	case "bootstrap":
-		switch arg.Arg() {
-		case "keys":
-			reqKeys := s.KeyTagger.GetAnsibleKeys()
-			for i := range reqKeys {
-				kn := reqKeys[i]
-				key, err := s.Keyring.GetKey(kn)
-				if err != nil {
-					fmt.Println("error occured when trying to get key")
-					return out, err
-				}
-				err = s.AddKey(kn, s.NewKeyRequestBuilder(kn, key))
-				if err != nil {
-					fmt.Println("error occured when adding key")
-					return out, err
-				}
-			}
-			return SemaphoreActionOut{Content: "Keyring successfuly bootstrapped."}, nil
-		case "project":
+		return s.BootstrapHandler(msg)
+	case "project":
+		return s.projectHandler(msg)
+	case "task":
+		return s.taskHandler(msg)
+	case "hosts":
+		return s.hostHandler(msg)
 
-			err := s.NewProject(YosaiProject)
-			if err != nil {
-				return out, err
-			}
-			err = s.AddRepository(s.Config.Repo(), s.Config.Branch())
-			if err != nil {
-				return out, err
-			}
-			err = s.AddEnvironment()
-			if err != nil {
-				return out, err
-			}
-			err = s.AddJobTemplate(s.Config.PlaybookName(), fmt.Sprintf("%s:%s", s.Config.Repo(), s.Config.Branch()))
-			if err != nil {
-				return out, err
-			}
-			return SemaphoreActionOut{Content: "Project successfuly bootstrapped."}, nil
-		case "inventory":
-			err := s.AddInventory(YosaiServerInventory, s.Config.VpnServer())
-			if err != nil {
-				return out, err
-			}
-			err = s.AddHostToInv(YosaiServerInventory, s.Config.VpnServer())
-			if err != nil {
-				return out, err
-			}
-			return SemaphoreActionOut{Content: "Inventory successfuly bootstrapped."}, nil
-		}
-	case "project-add":
-		err := s.NewProject(arg.Arg())
-		if err != nil {
-			return out, err
-		}
-		return SemaphoreActionOut{Content: "Project: " + arg.Arg() + " created."}, nil
-	case "show-task":
-		taskid, err := strconv.Atoi(arg.Arg())
-		if err != nil {
-			return out, err
-		}
-		taskout, err := s.GetTaskOutput(taskid)
-		if err != nil {
-			return out, err
-		}
-		b, err := json.MarshalIndent(taskout, " ", "    ")
-		if err != nil {
-			return out, err
-		}
-		return SemaphoreActionOut{Content: string(b)}, nil
-	case "show":
-		switch arg.Arg() {
-		case "projects":
-			proj, err := s.GetProjects()
-			if err != nil {
-				return out, err
-			}
-			b, err := json.MarshalIndent(proj, " ", "    ")
-			if err != nil {
-				return out, err
-			}
-			return SemaphoreActionOut{Content: string(b)}, nil
-		case "repos":
-			repos, err := s.GetAllRepos()
-			if err != nil {
-				return out, err
-			}
-			b, err := json.MarshalIndent(repos, " ", "    ")
-			if err != nil {
-				return out, err
-			}
-			return SemaphoreActionOut{Content: string(b)}, nil
-		case "inventories":
-			invs, err := s.GetAllInventories()
-			if err != nil {
-				return out, err
-			}
-			b, err := json.MarshalIndent(invs, " ", "    ")
-			if err != nil {
-				return out, err
-			}
-			return SemaphoreActionOut{Content: string(b)}, nil
-		case "templates":
-			templates, err := s.GetAllTemplates()
-			if err != nil {
-				return out, err
-			}
-			b, err := json.MarshalIndent(templates, " ", "    ")
-			if err != nil {
-				return out, err
-			}
-			return SemaphoreActionOut{Content: string(b)}, nil
-		}
-	case "run":
-		job, err := s.StartJob(arg.Arg())
-		if err != nil {
-			return out, err
-		}
-		b, err := json.MarshalIndent(job, " ", "    ")
-		if err != nil {
-			return out, err
-		}
-		return SemaphoreActionOut{Content: string(b)}, nil
-	case "remove-hosts":
-		hosts := strings.Split(strings.Trim(arg.Arg(), ","), ",")
-		err := s.RemoveHostFromInv(YosaiServerInventory, hosts...)
-		if err != nil {
-			return out, err
-		}
-		return SemaphoreActionOut{Content: "Hosts: " + arg.Arg() + " Removed."}, nil
-	case "add-hosts":
-		hosts := strings.Split(strings.Trim(arg.Arg(), ","), ",")
-		err := s.AddHostToInv(YosaiServerInventory, hosts...)
-		if err != nil {
-			return out, err
-		}
-		return SemaphoreActionOut{Content: "Hosts: " + arg.Arg() + " Added."}, nil
-
-	}
-	return out, &daemon.InvalidAction{Msg: "Unresolved method!"}
 }
 
 /*

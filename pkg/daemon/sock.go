@@ -2,88 +2,119 @@ package daemon
 
 import (
 	"bytes"
-	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 )
 
 const LogMsgTempl = "YOSAI Daemon ||| time: %s ||| %s\n"
 
-const (
-	Cloud     = "cloud"
-	Ansible   = "ansible"
-	Keys      = "keyring"
-	Config    = "config"
-	Daemon    = "daemon"
-	Bootstrap = "bootstrap"
-)
-
 /*
 #########################################################
 ######## PROTOCOL RELATED FUNCTIONS AND STRUCTS #########
 #########################################################
 */
-const SockMsgVers = "v1"
-const VersPos = 0
-const TargetPos = 1
-const MethodPos = 2
-const ArgPos = 3
+const SockMsgVers = 2
+const MESSAGE_RECIEVED = "MSG_RECV"
+const UnresolveableRequest = "UNRESOLVEABLE"
+const RequestOk = "OK"
+
+/*
+#################################
+####### Protocol v2 area ########
+#################################
+*/
+const VersionIdx = 0
+const StatusCodeIdx = 1
+const TypeInfoIdx = 2
+const BodyInfoIdx = 3
+const TargetInfoIdx = 11
+const MethodInfoIdx = 19
+const MsgHeaderEnd = 27
+
+const MsgRequest = "REQUEST"
+const MsgResponse = "RESPONSE"
 
 type SockMessage struct {
-	Version string
-	Target  string
-	Method  string
-	Arg     string
+	Type       string // the type of message being decoded
+	StatusMsg  string // a string denoting what the output was, used in response messages
+	StatusCode int8   // a status code that can be used to easily identify the type of error in response messages
+	Version    int8   `json:"version"` // This is a version header for failing fast
+	Body       []byte `json:"body"`    // The body of a SockMessage SHOULD be json decodable, to allow for complex data to get sent over
+	Target     string `json:"target"`  // This target 'route' for where this message should be sent. Think of this like an HTTP URI/path
+	Method     string `json:"method"`  // This is the method that we will be executing on the target endpoint. Think of this like the HTTP method
 }
 
-func NewSockMessage(target string, method string, arg string) SockMessage {
-	return SockMessage{Target: target, Method: method, Arg: arg}
+func NewSockMessage(msgType string, body []byte) *SockMessage {
+	return &SockMessage{Target: "",
+		Method:     "",
+		Body:       body,
+		Version:    SockMsgVers,
+		Type:       msgType,
+		StatusCode: int8(0),
+		StatusMsg:  RequestOk,
+	}
 }
 
-func Marshal(v SockMessage) string {
-	var msg string
-	msg = fmt.Sprintf("%s!SPLIT!%s!SPLIT!%s!SPLIT!%s", SockMsgVers, v.Target, v.Method, v.Arg)
-	msgStr := base64.RawStdEncoding.EncodeToString([]byte(msg))
-	return msgStr
-}
-func Unmarshal(b string, v *SockMessage) error {
-	msgBuf, err := base64.RawStdEncoding.DecodeString(b)
+/*
+Takes in a SockMessage struct and serializes it so that it can be sent over a socket, and then decoded as a SockMessage
+
+	:param v: a SockMessage to serialize for transportation
+*/
+func Marshal(v SockMessage) []byte {
+	msgHeader := []byte{}
+	msgHeaderBuf := bytes.NewBuffer(msgHeader)
+	err := binary.Write(msgHeaderBuf, binary.LittleEndian, int8(SockMsgVers))
+	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int8(v.StatusCode))
+	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int8(len(v.Type)))
+	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int64(len(v.Body)))
+	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int64(len(v.Target)))
+	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int64(len(v.Method)))
+	msgHeaderBuf.Write([]byte(v.Type))
+	msgHeaderBuf.Write(v.Body)
+	msgHeaderBuf.Write([]byte(v.Target))
+	msgHeaderBuf.Write([]byte(v.Method))
+
 	if err != nil {
-		return err // make custom error TODO
+		log.Fatal(err)
 	}
-	msgArr := strings.Split(string(msgBuf), "!SPLIT!")
-	if len(msgArr) != 4 {
-		log.Fatal(len(msgArr), "bad message array")
-	}
-	v.Version = msgArr[VersPos]
-	v.Target = msgArr[TargetPos]
-	v.Method = msgArr[MethodPos]
-	v.Arg = msgArr[ArgPos]
-	return nil
 
+	return msgHeaderBuf.Bytes()
 }
 
-var Actions map[string]struct{} = map[string]struct{}{
-	Cloud:     struct{}{},
-	Ansible:   struct{}{},
-	Keys:      struct{}{},
-	Config:    struct{}{},
-	Daemon:    struct{}{},
-	Bootstrap: struct{}{},
-}
+/*
+Unmarshalls a sock message byte array into a SockMessage struct, undoing what was done when Marshal() was called on the SockMessage
 
-type Action struct {
-	target   string
-	method   string
-	callable func(args interface{}) (ActionOut, error)
-	arg      string
+	:param msg: a byte array that can be unmarshalled into a SockMessage
+*/
+func Unmarshal(msg []byte) SockMessage {
+	vers := int8(msg[VersionIdx])
+	statusCode := int8(msg[StatusCodeIdx])
+	typeInfo := int(msg[TypeInfoIdx])
+	bodyInfo := int(binary.LittleEndian.Uint64(msg[BodyInfoIdx:TargetInfoIdx]))
+	targetInfo := int(binary.LittleEndian.Uint64(msg[TargetInfoIdx:MethodInfoIdx]))
+	msgPayload := msg[MsgHeaderEnd:]
+	body := msgPayload[typeInfo : typeInfo+bodyInfo]
+	var msgInfo = []string{
+		string(msgPayload[0:typeInfo]),
+		string(msgPayload[(typeInfo + bodyInfo):(typeInfo + bodyInfo + targetInfo)]),
+		string(msgPayload[(typeInfo + bodyInfo + targetInfo):]),
+	}
+	return SockMessage{
+		Type:       msgInfo[0],
+		StatusCode: statusCode,
+		StatusMsg:  MESSAGE_RECIEVED,
+		Version:    vers,
+		Body:       body,
+		Target:     msgInfo[1],
+		Method:     msgInfo[2],
+	}
 }
 
 /*
@@ -91,9 +122,6 @@ type Action struct {
 ########### IMPLEMENTING THE ActionIn INTERFACE ##########
 ##########################################################
 */
-func (a Action) Target() string { return a.target }
-func (a Action) Method() string { return a.method }
-func (a Action) Arg() string    { return a.arg }
 
 type ActionIn interface {
 	Target() string
@@ -108,7 +136,7 @@ type ActionOut interface {
 type Context struct {
 	conn     net.Listener
 	keyring  *ApiKeyRing
-	routes   map[string]func(args ActionIn) (ActionOut, error)
+	routes   map[string]func(req SockMessage) SockMessage
 	sockPath string
 	Config   Configuration
 	rwBuffer bytes.Buffer
@@ -134,22 +162,15 @@ func (c *Context) Respond(conn net.Conn) {
 
 func (c *Context) Handle(conn net.Conn) {
 	defer conn.Close()
-	b := make([]byte, 1024)
+	b := make([]byte, 2048)
 	nr, err := conn.Read(b)
 	if err != nil {
 		c.Log(err.Error())
 		return
 	}
-	action, err := c.parseAction(string(b[0:nr]))
-	if err != nil {
-		c.Log(err.Error())
-		return
-	}
-	out, err := c.resolveRoute(action)
-	if err != nil {
-		c.Log("Error calling CLI action: ", err.Error())
-	}
-	_, err = conn.Write([]byte(out.GetResult()))
+	req := c.parseRequest(b[0:nr])
+	out := c.resolveRoute(req)
+	_, err = conn.Write(Marshal(out))
 	if err != nil {
 		c.Log(err.Error())
 		return
@@ -181,7 +202,7 @@ func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configu
 	if err != nil {
 		log.Fatal(err)
 	}
-	routes := map[string]func(args ActionIn) (ActionOut, error){}
+	routes := map[string]func(req SockMessage) SockMessage{}
 	buf := make([]byte, 1024)
 	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring, routes: routes, Config: conf}
 
@@ -193,7 +214,7 @@ Register a function to the daemons function router
 	    :param name: the name to map the function to. This will dictate how the CLI will resolve a keyword to the target function
 		:param callable: the callable that will be executed when the keyword from 'name' is passed to the CLI
 */
-func (c *Context) Register(name string, callable func(args ActionIn) (ActionOut, error)) {
+func (c *Context) Register(name string, callable func(req SockMessage) SockMessage) {
 	c.routes[name] = callable
 }
 
@@ -218,27 +239,10 @@ Validate and parse a stream from the unix socket and return an Action
 
 	:param msg: a byte array with the action and arguments
 */
-func (c *Context) parseAction(msg string) (ActionIn, error) {
-	var action Action
+func (c *Context) parseRequest(msg []byte) SockMessage {
 	c.Log("Recieved request to parse action. ", string(msg))
-	var sockMsg SockMessage
-	err := Unmarshal(msg, &sockMsg)
-	if err != nil {
-		return action, &InvalidAction{Msg: "Could not unmarshal the message." + err.Error()} // TODO: Make marshalling/unmarshalling errors
-	}
 
-	_, ok := Actions[sockMsg.Target]
-	if !ok {
-		c.Log("Action not found: ", sockMsg.Target)
-		return action, &InvalidAction{Action: sockMsg.Target, Msg: "Action not resolveable."}
-	}
-
-	action = Action{
-		target: sockMsg.Target,
-		method: sockMsg.Method,
-		arg:    sockMsg.Arg,
-	}
-	return action, nil
+	return Unmarshal(msg)
 
 }
 
@@ -246,13 +250,13 @@ func (c *Context) parseAction(msg string) (ActionIn, error) {
 Resolve an action to a function
 :param action: a parsed action from the sock stream
 */
-func (c *Context) resolveRoute(action ActionIn) (ActionOut, error) {
-	var out ActionOut
-	handlerFunc, ok := c.routes[action.Target()]
+func (c *Context) resolveRoute(req SockMessage) SockMessage {
+	handlerFunc, ok := c.routes[req.Target]
 	if !ok {
-		return out, &InvalidAction{Msg: "Invalid Action", Action: action.Target()}
+		err := &InvalidAction{Msg: "Invalid Action", Action: req.Target}
+		return SockMessage{StatusMsg: UnresolveableRequest, Body: []byte(err.Error())}
 	}
-	return handlerFunc(action)
+	return handlerFunc(req)
 
 }
 

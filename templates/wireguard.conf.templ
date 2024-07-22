@@ -1,0 +1,11 @@
+{{  define "wireguard.conf.templ"}}
+
+[Interface]
+PrivateKey = {{ .VpnClientPrivateKey }}
+Address = {{ .VpnClientAddress }}
+
+{{ range Peers . }}
+    {{ template "wireguard.peer.templ" }}
+{{ end }}
+
+{{ end }}

@@ -1,0 +1,7 @@
+{{ define "wireguard.peer.templ" }}
+[Peer]
+PublicKey = {{ .Pubkey }}
+Endpoint = {{ .Address }}:{{ .Port }}
+AllowedIPs = 0.0.0.0/0
+
+{{ end }}

@@ -350,90 +350,82 @@ func (ln LinodeConnection) Bootstrap() error { return nil }
 
 /*
 ############################################
-#### IMPLEMENTING DAEMON CLI INTERFACES ####
+########### DAEMON EVENT HANDLERS ##########
 ############################################
 */
-type LinodeActionOut struct {
-	Content string
+
+type DeleteLinodeRequest struct {
+	Id string `json:"id"`
 }
 
-func (lno LinodeActionOut) GetResult() string {
-	return lno.Content
+type AddLinodeRequest struct {
+	Name string `json:"name"`
 }
 
-func (ln LinodeConnection) LinodeRouter(action daemon.ActionIn) (daemon.ActionOut, error) {
-	var out LinodeActionOut
-
-	switch action.Method() {
-	case "show":
-		switch action.Arg() {
-		case "all":
-			servers, err := ln.ListLinodes()
-			if err != nil {
-				return out, err
-			}
-			return servers, nil
-		case "images":
-			imgs, err := ln.GetImages()
-			if err != nil {
-				return out, err
-			}
-			b, err := json.MarshalIndent(imgs, " ", "    ")
-			if err != nil {
-				return out, err
-			}
-			return LinodeActionOut{Content: string(b)}, nil
-		case "regions":
-
-			regions, err := ln.GetRegions()
-			if err != nil {
-				return out, err
-			}
-			b, err := json.MarshalIndent(regions, " ", "    ")
-			if err != nil {
-				return out, err
-			}
-			return LinodeActionOut{Content: string(b)}, nil
-		case "types":
-
-			types, err := ln.GetTypes()
-			if err != nil {
-				return out, err
-			}
-			b, err := json.MarshalIndent(types, " ", "    ")
-			if err != nil {
-				return out, err
-			}
-			return LinodeActionOut{Content: string(b)}, nil
-
-		}
-	case "delete":
-		switch action.Arg() {
-		case "":
-			return out, &daemon.InvalidAction{Msg: "Not enough args passed."}
-		default:
-			err := ln.DeleteLinode(action.Arg())
-			if err != nil {
-				return out, err
-			}
-			return LinodeActionOut{Content: "Linode: " + action.Arg() + " deleted successfully."}, nil
-
-		}
-	case "new":
-		body, err := NewLinodeBodyBuilder(ln.Config.Image(), ln.Config.Region(), ln.Config.LinodeType(), action.Arg(), ln.Keyring)
-		if err != nil {
-			return out, &daemon.InvalidAction{Msg: "Could not create the payload for making a new VM: " + err.Error()}
-		}
-		resp, err := ln.CreateNewLinode(body)
-		if err != nil {
-			return out, &daemon.InvalidAction{Msg: "Error occured when cteating a new VM: " + err.Error()}
-		}
-		ln.Config.SetVpnServer(resp.Ipv4[0])
-		ln.Config.SetVpnServerId(resp.Id)
-		return LinodeActionOut{Content: "New server is provisioning. ID: " + fmt.Sprint(resp.Id)}, nil
-
+func (ln LinodeConnection) DeleteLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+	var payload DeleteLinodeRequest
+	err := json.Unmarshal(msg.Body, &payload)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
 	}
-	return LinodeActionOut{Content: "Unresolved method."}, nil
+	err = ln.DeleteLinode(payload.Id)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	responseMessage := []byte("Server with ID: " + payload.Id + " was deleted.")
+	return *daemon.NewSockMessage(daemon.MsgResponse, responseMessage)
+
+}
+
+/*
+Wraps the creation of a linode to make the LinodeRouter function slimmer
+
+	:param msg: a daemon.SockMessage struct with request info
+*/
+func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+	var payload AddLinodeRequest
+	err := json.Unmarshal(msg.Body, &payload)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	newLinodeReq, err := NewLinodeBodyBuilder(ln.Config.Image(),
+		ln.Config.Region(),
+		ln.Config.LinodeType(),
+		payload.Name,
+		ln.Keyring)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	resp, err := ln.CreateNewLinode(newLinodeReq)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+	}
+	b, _ := json.Marshal(resp)
+	return *daemon.NewSockMessage(daemon.MsgResponse, b)
+
+}
+
+/*
+Handles the routing for each method that can be performed on the cloud target
+
+	:param msg: a daemon.SockMessage with request details
+*/
+func (ln LinodeConnection) LinodeRouter(msg daemon.SockMessage) daemon.SockMessage {
+
+	switch msg.Method {
+	case "show":
+		servers, err := ln.ListLinodes()
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		b, _ := json.Marshal(servers)
+		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+	case "delete":
+		return ln.DeleteLinodeHandler(msg)
+	case "create":
+		return ln.AddLinodeHandler(msg)
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Action"))
 }
 
 /*

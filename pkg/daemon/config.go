@@ -58,6 +58,12 @@ func (c ConfigurationActionOut) GetResult() string {
 
 }
 
+/*
+Loads in the environment variable file at path, and then validates that all values in vars is present
+
+	    :param path: the path to the .env file
+		:param vars: the list of variables to check were loaded by godotenv.Load()
+*/
 func LoadAndVerifyEnv(path string, vars []string) error {
 
 	err := godotenv.Load(".env")
