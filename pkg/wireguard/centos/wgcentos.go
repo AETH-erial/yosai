@@ -9,13 +9,13 @@ import (
 type WireguardTemplateSeed struct {
 	VpnClientPrivateKey string
 	VpnClientAddress    string
-	Peers               []wireguardTemplatePeer
+	Peers               []WireguardTemplatePeer
 }
 
-type wireguardTemplatePeer struct {
+type WireguardTemplatePeer struct {
 	Pubkey  string
 	Address string
-	Port    string
+	Port    int
 }
 
 /*
@@ -24,7 +24,7 @@ Render out a client configuration file, utilizing the data provided from Semapho
 	    :param tmpl: a template.Template that will be populated with the VPN data
 		:param wgData: a WireGuardTemplateSeed struct that contains all the info needed to populate a wireguard config file
 */
-func RenderClientConfiguration(tmpl template.Template, wgData WireguardTemplateSeed) ([]byte, error) {
+func RenderClientConfiguration(tmpl *template.Template, wgData WireguardTemplateSeed) ([]byte, error) {
 	var b []byte
 	buff := bytes.NewBuffer(b)
 	err := tmpl.Execute(buff, wgData)

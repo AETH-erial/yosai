@@ -1,5 +1,7 @@
 package daemon
 
+import wg "git.aetherial.dev/aeth/yosai/pkg/wireguard/centos"
+
 type DaemonActionOut struct {
 	Content string
 }
@@ -8,8 +10,32 @@ func (d DaemonActionOut) GetResult() string {
 	return d.Content
 }
 
-func (c *Context) DaemonRouter(arg ActionIn) (ActionOut, error) {
-	var out DaemonActionOut
+func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
+	switch msg.Method {
+	case "render-config":
+		serverKeypair, err := c.keyring.GetKey("WG_SERVER_KEYPAIR")
+		if err != nil {
+			return *NewSockMessage(MsgResponse, []byte(err.Error()))
+		}
+		clientKeypair, err := c.keyring.GetKey("WG_CLIENT_KEYPAIR")
+		if err != nil {
+			return *NewSockMessage(MsgResponse, []byte(err.Error()))
+		}
+		seed := wg.WireguardTemplateSeed{
+			VpnClientPrivateKey: clientKeypair.GetSecret(),
+			VpnClientAddress:    c.Config.VpnClientIpAddr(),
+			Peers: []wg.WireguardTemplatePeer{
+				wg.WireguardTemplatePeer{
+					Pubkey:  serverKeypair.GetPublic(),
+					Address: c.Config.VpnClientIpAddr(),
+					Port:    c.Config.VpnServerPort(),
+				},
+			}}
+		cfg, err := wg.RenderClientConfiguration(c.VpnTempl, seed)
+		return *NewSockMessage(MsgResponse, cfg)
+	default:
+		return *NewSockMessage(MsgResponse, []byte("Unresolved Method"))
+	}
 	//ansibleTargets := []string{"keys", "inventory", "project"}
 	/*
 		switch arg.Method() {
@@ -62,6 +88,5 @@ func (c *Context) DaemonRouter(arg ActionIn) (ActionOut, error) {
 
 		}
 	*/
-	return out, nil
 
 }

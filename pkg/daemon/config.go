@@ -33,6 +33,7 @@ type Configuration interface {
 	SetVpnNetwork(val string) error
 	VpnClientIpAddr() string
 	VpnServerIpAddr() string
+	VpnServerPort() int
 	VpnServerNetwork() string
 	VpnServerId() int
 	VpnServer() string
@@ -132,6 +133,7 @@ type serviceConfig struct {
 	VpnServerName    string `json:"vpn_server_name"`
 	VpnServerNetwork string `json:"vpn_server_network"`
 	VpnServerIPv4    string `json:"vpn_server_ipv4"`
+	VpnServerPort    int    `json:"vpn_server_port"`
 	VpnClientIPv4    string `json:"vpn_client_ipv4"`
 }
 
@@ -207,6 +209,9 @@ func (c *ConfigFromFile) VpnClientIpAddr() string {
 }
 func (c *ConfigFromFile) VpnServerNetwork() string {
 	return c.Service.VpnServerNetwork
+}
+func (c *ConfigFromFile) VpnServerPort() int {
+	return c.Service.VpnServerPort
 }
 
 func ReadConfig(path string) Configuration {

@@ -8,9 +8,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 
 	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 )
 
@@ -50,19 +52,23 @@ func jsonBuilder(v interface{}, value string) []byte {
 		return b
 
 	}
+	vaultReq, ok := v.(hashicorp.VaultItem)
+	if ok {
+		vals := strings.Split(value, ",")
+		if len(vals) != 4 {
+			log.Fatal("To add a key, you must pass the <name>,<type>,<public>,<private>. TODO: this interface needs to be improved.")
+		}
+		vaultReq = hashicorp.VaultItem{
+			Name:   vals[0],
+			Type:   vals[1],
+			Public: vals[2],
+			Secret: vals[3],
+		}
+		b, _ := json.Marshal(vaultReq)
+		return b
+	}
 	return []byte("{\"data\":\"test\"}")
 
-}
-
-func reader(r io.Reader) {
-	buf := make([]byte, 1024)
-	for {
-		n, err := r.Read(buf[:])
-		if err != nil {
-			return
-		}
-		println("Client got:", string(buf[0:n]))
-	}
 }
 
 func main() {
@@ -89,10 +95,16 @@ func main() {
 		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
 	case "ansible":
 		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
+	case "keyring":
+		rb.Write(jsonBuilder(hashicorp.VaultItem{}, fmt.Sprintf("%s,,,", args[2])))
+	case "vault":
+		rb.Write(jsonBuilder(hashicorp.VaultItem{}, args[2]))
+
 	}
 
 	msg := daemon.Marshal(daemon.SockMessage{
 		Type:       daemon.MsgRequest,
+		TypeLen:    int8(len(daemon.MsgRequest)),
 		StatusMsg:  "",
 		StatusCode: 0,
 		Version:    daemon.SockMsgVers,

@@ -2,11 +2,11 @@ package daemon
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/url"
-	"strings"
 
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 )
@@ -256,49 +256,50 @@ func NewKeyRing() *ApiKeyRing {
 
 }
 
+type KeyringRequest struct {
+	Public string `json:"public"`
+	Secret string `json:"secret"`
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+}
+
 /*
 Function to wrap GetKey that will return an ActionOut implementer
 */
-func (a *ApiKeyRing) KeyringRouter(arg ActionIn) (ActionOut, error) {
-	var out KeyGetterActionOut
-	switch arg.Method() {
+func (a *ApiKeyRing) KeyringRouter(msg SockMessage) SockMessage {
+	switch msg.Method {
 	case "show":
-		switch arg.Arg() {
-		case "all":
-			// unimplemented
-			return out, nil
-		case "":
-			return out, &InvalidAction{Msg: "No argument passed!"}
-		default:
-			key, err := a.GetKey(arg.Arg())
-
-			if err != nil {
-				return out, err
-			}
-			out = KeyGetterActionOut{Public: key.GetPublic(), Private: key.GetSecret()}
-
-			return out, nil
-
+		var req KeyringRequest
+		err := json.Unmarshal(msg.Body, &req)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, []byte(err.Error()))
 		}
+		switch req.Name {
+		case "all":
+			b, err := json.Marshal(a.Keys)
+			if err != nil {
+				return *NewSockMessage(MsgResponse, []byte(err.Error()))
+			}
+			return *NewSockMessage(MsgResponse, b)
+		default:
+			key, err := a.GetKey(req.Name)
+			if err != nil {
+				return *NewSockMessage(MsgResponse, []byte(err.Error()))
+			}
+			b, _ := json.Marshal(key)
+			return *NewSockMessage(MsgResponse, b)
+		}
+
 	case "bootstrap":
 		err := a.Bootstrap(keytags.ConstKeytag{})
 		if err != nil {
-			return out, err
+			return *NewSockMessage(MsgResponse, []byte(err.Error()))
 		}
-		return KeyGetterActionOut{Public: "Keyring successfully bootstrapped."}, nil
-	case "add-keypair":
-		argSp := strings.Split(arg.Arg(), ",")
-		if len(argSp) != 2 {
-			return out, &InvalidAction{Msg: "You must pass the keypair comma-delimited. Like: <PUBLICKEY>,<PRIVATEKEY>"}
-		}
-		err := a.AddKey(keytags.ConstKeytag{}.WgClientKeypairKeyname(), WireguardKeypair{PublicKey: argSp[0], PrivateKey: argSp[1]})
-		if err != nil {
-			return out, &InvalidAction{Msg: "Error adding your key to the keyring: " + err.Error()}
-		}
-		return KeyGetterActionOut{Public: argSp[0], Private: argSp[1]}, nil
-
+		return *NewSockMessage(MsgResponse, []byte("Keyring successfully bootstrapped."))
+	default:
+		return *NewSockMessage(MsgResponse, []byte("Unresolvable method"))
 	}
-	return out, &InvalidAction{Msg: "No method resolved!"}
+
 }
 
 /*

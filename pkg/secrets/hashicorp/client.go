@@ -29,6 +29,7 @@ type VaultResponseInner struct {
 }
 
 type VaultItem struct {
+	Name   string `json:"name"`
 	Public string `json:"public"`
 	Secret string `json:"secret"`
 	Type   string `json:"type"`
@@ -40,6 +41,11 @@ type VaultConnection struct {
 	KeyRing   daemon.DaemonKeyRing
 	Client    *http.Client
 }
+
+func (v VaultItem) GetPublic() string { return v.Public }
+func (v VaultItem) GetSecret() string { return v.Secret }
+func (v VaultItem) GetType() string   { return v.Type }
+func (v VaultItem) Prepare() string   { return "Unimplemented method" }
 
 // Returns the 'public' field of the credential, i.e. a username or something
 func (v VaultResponse) GetPublic() string {
@@ -124,7 +130,7 @@ func (v VaultConnection) AddKey(name string, key daemon.Key) error {
 	if err != nil {
 		return err
 	}
-	vaultBase := fmt.Sprintf("%s://%s/%s/%s", v.HttpProto, v.VaultUrl, SecretsApiPath, key.GetPublic())
+	vaultBase := fmt.Sprintf("%s://%s/%s/%s", v.HttpProto, v.VaultUrl, SecretsApiPath, name)
 	req, err := http.NewRequest("POST", vaultBase, bytes.NewReader(b))
 	if err != nil {
 		return err
@@ -180,6 +186,30 @@ func (v VaultConnection) RemoveKey(name string) error {
 // Return the resource name for logging purposes
 func (v VaultConnection) Source() string {
 	return "Hashicorp Vault"
+}
+
+/*
+Handles the routing for the hashicorp keyring routes
+
+	:param msg: a daemon.SockMessage that contains request data
+*/
+func (v VaultConnection) VaultRouter(msg daemon.SockMessage) daemon.SockMessage {
+	switch msg.Method {
+	case "add":
+		var req VaultItem
+		err := json.Unmarshal(msg.Body, &req)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		err = v.AddKey(req.Name, req)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Key successfully added."))
+	default:
+		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolvable method"))
+
+	}
 }
 
 /*

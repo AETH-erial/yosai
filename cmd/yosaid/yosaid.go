@@ -1,11 +1,13 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"text/template"
 
 	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
@@ -13,6 +15,9 @@ import (
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 )
+
+// go:embed templates/
+var vpnTemplates embed.FS
 
 const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
 
@@ -68,14 +73,20 @@ func main() {
 	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring, conf, keytags.ConstKeytag{})
 	fmt.Println("made semaphore connection")
 	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
-	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf)
-	//	ctx.Register("keyring", apikeyring.KeyringRouter) //TODO: fix the keyring router to implement the right shit
+
+	peerConf, err := template.ParseFS(vpnTemplates, "*.templ")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf, peerConf)
+	ctx.Register("keyring", apikeyring.KeyringRouter) //TODO: fix the keyring router to implement the right shit
 	ctx.Register("config", conf.ConfigRouter)
 	ctx.Register("cloud", lnConn.LinodeRouter)
 	ctx.Register("ansible", semaphoreConn.BootstrapHandler)
 	ctx.Register("ansible-hosts", semaphoreConn.HostHandler)
 	ctx.Register("ansible-projects", semaphoreConn.ProjectHandler)
 	ctx.Register("ansible-job", semaphoreConn.TaskHandler)
-	//	ctx.Register("daemon", ctx.DaemonRouter) // TODO: fix the daemon keyring router so it also can be used as a server route
+	ctx.Register("vault", hashiConn.VaultRouter)
+	ctx.Register("daemon", ctx.DaemonRouter) // TODO: fix the daemon keyring router so it also can be used as a server route
 	ctx.ListenAndServe()
 }

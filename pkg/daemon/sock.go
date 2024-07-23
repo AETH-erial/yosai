@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"text/template"
 	"time"
 )
 
@@ -43,6 +44,7 @@ const MsgResponse = "RESPONSE"
 
 type SockMessage struct {
 	Type       string // the type of message being decoded
+	TypeLen    int8   // The length of the Type, used for convenience when Marshalling
 	StatusMsg  string // a string denoting what the output was, used in response messages
 	StatusCode int8   // a status code that can be used to easily identify the type of error in response messages
 	Version    int8   `json:"version"` // This is a version header for failing fast
@@ -57,7 +59,8 @@ func NewSockMessage(msgType string, body []byte) *SockMessage { // TODO: this fu
 		Body:       body,
 		Version:    SockMsgVers,
 		Type:       msgType,
-		StatusCode: int8(0),
+		TypeLen:    int8(len(msgType)),
+		StatusCode: 0,
 		StatusMsg:  RequestOk,
 	}
 }
@@ -70,19 +73,39 @@ Takes in a SockMessage struct and serializes it so that it can be sent over a so
 func Marshal(v SockMessage) []byte { // TODO: Need to clean up the error handling here. This is really brittle. I just wanted to get it working
 	msgHeader := []byte{}
 	msgHeaderBuf := bytes.NewBuffer(msgHeader)
-	err := binary.Write(msgHeaderBuf, binary.LittleEndian, int8(SockMsgVers))
-	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int8(v.StatusCode))
-	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int8(len(v.Type)))
-	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int64(len(v.Body)))
-	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int64(len(v.Target)))
-	err = binary.Write(msgHeaderBuf, binary.LittleEndian, int64(len(v.Method)))
-	msgHeaderBuf.Write([]byte(v.Type))
-	msgHeaderBuf.Write(v.Body)
-	msgHeaderBuf.Write([]byte(v.Target))
-	msgHeaderBuf.Write([]byte(v.Method))
-
-	if err != nil {
-		log.Fatal(err)
+	preamble := []int8{
+		SockMsgVers,
+		v.StatusCode,
+		v.TypeLen,
+	}
+	msgMeta := []int64{
+		int64(len(v.Body)),
+		int64(len(v.Target)),
+		int64(len(v.Method)),
+	}
+	msgBody := [][]byte{
+		[]byte(v.Type),
+		v.Body,
+		[]byte(v.Target),
+		[]byte(v.Method),
+	}
+	for i := range preamble {
+		err := binary.Write(msgHeaderBuf, binary.LittleEndian, preamble[i])
+		if err != nil {
+			log.Fatal("Fatal error when writing: ", preamble[i], " into message header buffer.")
+		}
+	}
+	for i := range msgMeta {
+		err := binary.Write(msgHeaderBuf, binary.LittleEndian, msgMeta[i])
+		if err != nil {
+			log.Fatal("Fatal error when writing: ", msgMeta[i], " into message header buffer.")
+		}
+	}
+	for i := range msgBody {
+		_, err := msgHeaderBuf.Write(msgBody[i])
+		if err != nil {
+			log.Fatal("Fatal error when writing: ", msgBody[i], " into message header buffer.")
+		}
 	}
 
 	return msgHeaderBuf.Bytes()
@@ -141,6 +164,7 @@ type Context struct {
 	Config   Configuration
 	rwBuffer bytes.Buffer
 	stream   io.Writer
+	VpnTempl *template.Template
 }
 
 /*
@@ -196,7 +220,7 @@ func (c *Context) handleSyscalls() {
 /*
 Open a daemon context pointer
 */
-func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configuration) *Context {
+func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configuration, vpnTemplate *template.Template) *Context {
 
 	sock, err := net.Listen("unix", path)
 	if err != nil {
@@ -204,7 +228,8 @@ func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configu
 	}
 	routes := map[string]func(req SockMessage) SockMessage{}
 	buf := make([]byte, 1024)
-	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring, routes: routes, Config: conf}
+	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring,
+		routes: routes, Config: conf, VpnTempl: vpnTemplate}
 
 }
 
