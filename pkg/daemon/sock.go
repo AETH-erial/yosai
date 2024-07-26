@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"embed"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -13,6 +14,9 @@ import (
 	"text/template"
 	"time"
 )
+
+// go:embed templates/*
+var vpnTemplates embed.FS
 
 const LogMsgTempl = "YOSAI Daemon ||| time: %s ||| %s\n"
 
@@ -220,16 +224,20 @@ func (c *Context) handleSyscalls() {
 /*
 Open a daemon context pointer
 */
-func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configuration, vpnTemplate *template.Template) *Context {
+func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configuration) *Context {
 
 	sock, err := net.Listen("unix", path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	vpnTmpl, err := template.ParseFS(vpnTemplates, "templates/*")
 	if err != nil {
 		log.Fatal(err)
 	}
 	routes := map[string]func(req SockMessage) SockMessage{}
 	buf := make([]byte, 1024)
 	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring,
-		routes: routes, Config: conf, VpnTempl: vpnTemplate}
+		routes: routes, Config: conf, VpnTempl: vpnTmpl}
 
 }
 
