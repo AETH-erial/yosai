@@ -43,6 +43,14 @@ func jsonBuilder(v interface{}, value string) []byte {
 		return b
 
 	}
+	pollLn, ok := v.(linode.PollLinodeRequest)
+	if ok {
+		pollLn = linode.PollLinodeRequest{
+			Address: value,
+		}
+		b, _ := json.Marshal(pollLn)
+		return b
+	}
 	semReq, ok := v.(semaphore.SemaphoreRequest)
 	if ok {
 		semReq = semaphore.SemaphoreRequest{
@@ -86,6 +94,8 @@ func main() {
 			rb.Write(jsonBuilder(linode.DeleteLinodeRequest{}, args[2]))
 		case "add":
 			rb.Write(jsonBuilder(linode.AddLinodeRequest{}, args[2]))
+		case "poll":
+			rb.Write(jsonBuilder(linode.PollLinodeRequest{}, args[2]))
 		}
 	case "ansible-hosts":
 		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
@@ -133,10 +143,14 @@ func main() {
 		}
 		log.Fatal(err)
 	}
+	responseMsg := daemon.Unmarshal(resp.Bytes())
 	var outbuf = bytes.NewBuffer([]byte{})
-	fmt.Println(string(resp.Bytes()))
 
-	json.Indent(outbuf, daemon.Unmarshal(resp.Bytes()).Body, " ", "    ")
+	err = json.Indent(outbuf, responseMsg.Body, " ", "    ")
+	if err != nil {
+		fmt.Println(string(responseMsg.Body))
+		os.Exit(0)
+	}
 	fmt.Println(string(outbuf.Bytes()))
 
 }

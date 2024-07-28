@@ -21,15 +21,6 @@ const (
 	WIREGUARD          = "wireguard"
 )
 
-type KeyGetterActionOut struct {
-	Private string
-	Public  string
-}
-
-func (k KeyGetterActionOut) GetResult() string {
-	return fmt.Sprintf("Public: %s\nPrivate: %s\n", k.Public, k.Private)
-}
-
 type WireguardKeypair struct {
 	PrivateKey string
 	PublicKey  string
@@ -76,13 +67,6 @@ Return the private data for this auth type
 */
 func (b BearerAuth) GetSecret() string {
 	return b.Secret
-}
-
-/*
-Spit out a string with the data so that we can implement the 'ActionOut' interface
-*/
-func (b BearerAuth) GetResult() string {
-	return fmt.Sprintf("Public: %s\nSecret: %s\n", b.GetPublic(), b.GetSecret())
 }
 
 func (b BearerAuth) GetType() string {
@@ -186,7 +170,6 @@ func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 	}
 	if len(a.Rungs) > 0 {
 		for i := range a.Rungs {
-			fmt.Println("trying to get key: " + name + " from: " + a.Rungs[i].Source())
 			key, err := a.Rungs[i].GetKey(name)
 			if err != nil {
 				if errors.Is(err, KeyNotFound) {
@@ -264,7 +247,9 @@ type KeyringRequest struct {
 }
 
 /*
-Function to wrap GetKey that will return an ActionOut implementer
+Route handler for all requests for the Keyring component
+
+	:param msg: a SockMessage struct containing the request information
 */
 func (a *ApiKeyRing) KeyringRouter(msg SockMessage) SockMessage {
 	switch msg.Method {
@@ -272,32 +257,32 @@ func (a *ApiKeyRing) KeyringRouter(msg SockMessage) SockMessage {
 		var req KeyringRequest
 		err := json.Unmarshal(msg.Body, &req)
 		if err != nil {
-			return *NewSockMessage(MsgResponse, []byte(err.Error()))
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
 		switch req.Name {
 		case "all":
 			b, err := json.Marshal(a.Keys)
 			if err != nil {
-				return *NewSockMessage(MsgResponse, []byte(err.Error()))
+				return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 			}
-			return *NewSockMessage(MsgResponse, b)
+			return *NewSockMessage(MsgResponse, REQUEST_OK, b)
 		default:
 			key, err := a.GetKey(req.Name)
 			if err != nil {
-				return *NewSockMessage(MsgResponse, []byte(err.Error()))
+				return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 			}
 			b, _ := json.Marshal(key)
-			return *NewSockMessage(MsgResponse, b)
+			return *NewSockMessage(MsgResponse, REQUEST_OK, b)
 		}
 
 	case "bootstrap":
 		err := a.Bootstrap(keytags.ConstKeytag{})
 		if err != nil {
-			return *NewSockMessage(MsgResponse, []byte(err.Error()))
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *NewSockMessage(MsgResponse, []byte("Keyring successfully bootstrapped."))
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully bootstrapped."))
 	default:
-		return *NewSockMessage(MsgResponse, []byte("Unresolvable method"))
+		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolvable method"))
 	}
 
 }

@@ -1,0 +1,13 @@
+{{  define "wireguard.conf.templ" }}
+
+[Interface]
+PrivateKey = {{ .VpnClientPrivateKey }}
+Address = {{ .VpnClientAddress }}
+
+{{ range .Peers }}
+[Peer]
+PublicKey = {{ .Pubkey }}
+Endpoint = {{ .Address }}:{{ .Port }}
+AllowedIPs = 0.0.0.0/0
+{{ end }}
+{{ end }}

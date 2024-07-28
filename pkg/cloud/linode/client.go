@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
@@ -38,17 +39,6 @@ type GetLinodeResponse struct {
 	Created string   `json:"created"`
 	Region  string   `json:"region"`
 	Status  string   `json:"status"`
-}
-
-/*
-implementing the daemon.ActionOut interface
-*/
-func (g GetLinodeResponse) GetResult() string {
-	b, err := json.MarshalIndent(g, " ", "    ")
-	if err != nil {
-		return "Error unmarshalling response: " + err.Error()
-	}
-	return string(b)
 }
 
 type TypesResponse struct {
@@ -103,7 +93,6 @@ func NewLinodeBodyBuilder(image string, region string, linodeType string, label 
 	if err != nil {
 		return newLnBody, &LinodeClientError{Msg: err.Error()}
 	}
-	fmt.Print(rootSshKey.GetPublic(), rootSshKey.GetSecret(), "\n")
 
 	return NewLinodeBody{AuthorizedKeys: []string{rootSshKey.GetPublic()},
 		Label:    label,
@@ -228,6 +217,26 @@ func (ln LinodeConnection) GetByIp(addr string) (GetLinodeResponse, error) {
 }
 
 /*
+Get a linode by its name/label
+
+	:param name: the name/label of the linode
+*/
+func (ln LinodeConnection) GetByName(name string) (GetLinodeResponse, error) {
+	var out GetLinodeResponse
+	servers, err := ln.ListLinodes()
+	if err != nil {
+		return out, err
+	}
+	for i := range servers.Data {
+		if servers.Data[i].Label == name {
+			return servers.Data[i], nil
+		}
+	}
+	return out, &LinodeClientError{Msg: "Linode with name: " + name + " not found."}
+
+}
+
+/*
 Create a new linode instance
 
 	    :param keyring: a daemon.DaemonKeyRing implementer that can return a linode API key
@@ -344,6 +353,35 @@ func (ln LinodeConnection) Delete(path string) ([]byte, error) {
 }
 
 /*
+Poll for new server creation
+
+	    :param name: the IPv4 address of the linode server
+		:param max_tries: the number of calls the client will send to linode before exiting
+*/
+func (ln LinodeConnection) ServerPoll(name string, max_tries int) error {
+	var count int
+	for {
+		count = count + 1
+		if count > max_tries {
+			return &LinodeTimeOutError{Tries: max_tries}
+		}
+		ln.Config.Log("Polling for server status times: ", fmt.Sprint(count))
+		resp, err := ln.GetByName(name)
+		if err != nil {
+			return err
+		}
+		if resp.Status == "running" {
+			ln.Config.Log("Server: ", resp.Ipv4[0], " showing as: ", resp.Status)
+			return nil
+		}
+		ln.Config.Log("Server inactive, showing status: ", resp.Status)
+
+		time.Sleep(time.Second * 3)
+	}
+
+}
+
+/*
 Bootstrap the cloud environment
 */
 func (ln LinodeConnection) Bootstrap() error { return nil }
@@ -362,18 +400,22 @@ type AddLinodeRequest struct {
 	Name string `json:"name"`
 }
 
+type PollLinodeRequest struct {
+	Address string `json:"address"`
+}
+
 func (ln LinodeConnection) DeleteLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
-	var payload DeleteLinodeRequest
-	err := json.Unmarshal(msg.Body, &payload)
+	resp, err := ln.GetByName(ln.Config.ServerName())
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	err = ln.DeleteLinode(payload.Id)
+
+	err = ln.DeleteLinode(fmt.Sprint(resp.Id))
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_ACCEPTED, []byte(err.Error()))
 	}
-	responseMessage := []byte("Server with ID: " + payload.Id + " was deleted.")
-	return *daemon.NewSockMessage(daemon.MsgResponse, responseMessage)
+	responseMessage := []byte("Server: " + ln.Config.ServerName() + " was deleted.")
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, responseMessage)
 
 }
 
@@ -386,24 +428,38 @@ func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockM
 	var payload AddLinodeRequest
 	err := json.Unmarshal(msg.Body, &payload)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	newLinodeReq, err := NewLinodeBodyBuilder(ln.Config.Image(),
 		ln.Config.Region(),
 		ln.Config.LinodeType(),
-		payload.Name,
+		ln.Config.ServerName(),
 		ln.Keyring)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	resp, err := ln.CreateNewLinode(newLinodeReq)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	ln.Config.SetVpnServer(resp.Ipv4[0])
 	ln.Config.SetVpnServerId(resp.Id)
 	b, _ := json.Marshal(resp)
-	return *daemon.NewSockMessage(daemon.MsgResponse, b)
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+
+}
+
+/*
+Wraps the polling feature of the client in a Handler function
+
+	:param msg: a daemon.SockMessage that contains the request info
+*/
+func (ln LinodeConnection) PollLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+	err := ln.ServerPoll(ln.Config.ServerName(), 15)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Server is running."))
 
 }
 
@@ -418,16 +474,19 @@ func (ln LinodeConnection) LinodeRouter(msg daemon.SockMessage) daemon.SockMessa
 	case "show":
 		servers, err := ln.ListLinodes()
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		b, _ := json.Marshal(servers)
-		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 	case "delete":
 		return ln.DeleteLinodeHandler(msg)
 	case "add":
 		return ln.AddLinodeHandler(msg)
+	case "poll":
+		return ln.PollLinodeHandler(msg)
+
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Action"))
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Action"))
 }
 
 /*
@@ -441,4 +500,12 @@ type LinodeClientError struct {
 
 func (ln *LinodeClientError) Error() string {
 	return fmt.Sprintf("There was an error calling linode: '%s'", ln.Msg)
+}
+
+type LinodeTimeOutError struct {
+	Tries int
+}
+
+func (ln *LinodeTimeOutError) Error() string {
+	return "Polling timed out after: " + fmt.Sprint(ln.Tries) + " attempts"
 }

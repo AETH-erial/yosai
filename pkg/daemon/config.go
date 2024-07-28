@@ -3,14 +3,18 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/netip"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
+
+const LogMsgTmpl = "YOSAI Daemon ||| time: %s ||| %s\n"
 
 var EnvironmentVariables = []string{
 	"HASHICORP_VAULT_URL",
@@ -31,6 +35,8 @@ type Configuration interface {
 	SetVpnServer(val string)
 	SetVpnServerId(val int)
 	SetVpnNetwork(val string) error
+	SetSecretsBackend(val string)
+	SetSecretsBackendUrl(val string)
 	VpnClientIpAddr() string
 	VpnServerIpAddr() string
 	VpnServerPort() int
@@ -38,24 +44,18 @@ type Configuration interface {
 	VpnServerId() int
 	VpnServer() string
 	ServerName() string
+	GetServer(priority int8) (VpnServer, error)
+	SecretsBackend() string
+	SecretsBackendUrl() string
 	Repo() string
 	Branch() string
 	PlaybookName() string
 	Image() string
 	Region() string
 	LinodeType() string
+	Log(data ...string)
 	ConfigRouter(msg SockMessage) SockMessage
 	Save(path string) error
-}
-
-type ConfigurationActionOut struct {
-	Config string
-}
-
-// Implementing the ActionOut interface
-func (c ConfigurationActionOut) GetResult() string {
-	return c.Config
-
 }
 
 /*
@@ -107,15 +107,33 @@ func (c *ConfigFromFile) ConfigRouter(msg SockMessage) SockMessage {
 
 		b, err := json.MarshalIndent(&c, "", "   ")
 		if err != nil {
-			return *NewSockMessage(MsgResponse, []byte(err.Error()))
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *NewSockMessage(MsgResponse, b)
+		return *NewSockMessage(MsgResponse, REQUEST_OK, b)
+	case "save":
+		err := c.Save(DefaultConfigLoc)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved successfully."))
+	case "reload":
+		b, err := os.ReadFile(DefaultConfigLoc)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		err = json.Unmarshal(b, c)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration reloaded successfully."))
+
 	default:
-		return *NewSockMessage(MsgResponse, []byte("Unresolved Method"))
+		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved Method"))
 	}
 }
 
 type ConfigFromFile struct {
+	stream  io.Writer
 	Cloud   cloudConfig   `json:"cloud"`
 	Ansible ansibleConfig `json:"ansible"`
 	Service serviceConfig `json:"service"`
@@ -128,24 +146,51 @@ type ansibleConfig struct {
 }
 
 type serviceConfig struct {
-	VpnServer        string `json:"vpn_server"`
-	VpnServerId      int    `json:"vpn_server_id"`
-	VpnServerName    string `json:"vpn_server_name"`
-	VpnServerNetwork string `json:"vpn_server_network"`
-	VpnServerIPv4    string `json:"vpn_server_ipv4"`
-	VpnServerPort    int    `json:"vpn_server_port"`
-	VpnClientIPv4    string `json:"vpn_client_ipv4"`
+	Servers           []VpnServer
+	VpnServer         string `json:"vpn_server"`
+	VpnServerId       int    `json:"vpn_server_id"`
+	VpnServerName     string `json:"vpn_server_name"`
+	VpnServerNetwork  string `json:"vpn_server_network"`
+	VpnServerIPv4     string `json:"vpn_server_ipv4"`
+	VpnServerPort     int    `json:"vpn_server_port"`
+	VpnClientIPv4     string `json:"vpn_client_ipv4"`
+	SecretsBackend    string `json:"secrets_backend"`
+	SecretsBackendUrl string `json:"secrets_backend_url"`
 }
 
-func (c *ConfigFromFile) SetRepo(val string)         { c.Ansible.Repo = val }
-func (c *ConfigFromFile) SetBranch(val string)       { c.Ansible.Branch = val }
-func (c *ConfigFromFile) SetPlaybookName(val string) { c.Ansible.PlaybookName = val }
-func (c *ConfigFromFile) SetImage(val string)        { c.Cloud.Image = val }
-func (c *ConfigFromFile) SetRegion(val string)       { c.Cloud.Region = val }
-func (c *ConfigFromFile) SetLinodeType(val string)   { c.Cloud.LinodeType = val }
-func (c *ConfigFromFile) SetVpnServer(val string)    { c.Service.VpnServer = val }
-func (c *ConfigFromFile) SetVpnServerId(val int)     { c.Service.VpnServerId = val }
-func (c *ConfigFromFile) SetServerName(val string)   { c.Service.VpnServerName = val }
+func (c *ConfigFromFile) GetServer(priority int8) (VpnServer, error) {
+	for i := range c.Service.Servers {
+		if c.Service.Servers[i].Priority == priority {
+			return c.Service.Servers[i], nil
+		}
+	}
+	return VpnServer{}, &ServerNotFound{}
+}
+
+type VpnServer struct {
+	WanIpv4     string
+	Fqdn        string
+	WgPort      int
+	ServerLabel string
+	VpnIpv4     net.IPAddr
+	Priority    int8
+}
+
+type ServerNotFound struct{}
+
+func (s *ServerNotFound) Error() string { return "Server with the priority passed was not found." }
+
+func (c *ConfigFromFile) SetRepo(val string)              { c.Ansible.Repo = val }
+func (c *ConfigFromFile) SetBranch(val string)            { c.Ansible.Branch = val }
+func (c *ConfigFromFile) SetPlaybookName(val string)      { c.Ansible.PlaybookName = val }
+func (c *ConfigFromFile) SetImage(val string)             { c.Cloud.Image = val }
+func (c *ConfigFromFile) SetRegion(val string)            { c.Cloud.Region = val }
+func (c *ConfigFromFile) SetLinodeType(val string)        { c.Cloud.LinodeType = val }
+func (c *ConfigFromFile) SetVpnServer(val string)         { c.Service.VpnServer = val }
+func (c *ConfigFromFile) SetVpnServerId(val int)          { c.Service.VpnServerId = val }
+func (c *ConfigFromFile) SetServerName(val string)        { c.Service.VpnServerName = val }
+func (c *ConfigFromFile) SetSecretsBackend(val string)    { c.Service.SecretsBackend = val }
+func (c *ConfigFromFile) SetSecretsBackendUrl(val string) { c.Service.SecretsBackendUrl = val }
 func (c *ConfigFromFile) SetVpnNetwork(val string) error {
 	addr, ntwrk, err := net.ParseCIDR(val)
 	if err != nil {
@@ -213,6 +258,20 @@ func (c *ConfigFromFile) VpnServerNetwork() string {
 func (c *ConfigFromFile) VpnServerPort() int {
 	return c.Service.VpnServerPort
 }
+func (c *ConfigFromFile) SecretsBackend() string {
+	return c.Service.SecretsBackend
+}
+func (c *ConfigFromFile) SecretsBackendUrl() string {
+	return c.Service.SecretsBackendUrl
+}
+
+/*
+Log a message to the Contexts 'stream' io.Writer interface
+*/
+func (c *ConfigFromFile) Log(data ...string) {
+	c.stream.Write([]byte(fmt.Sprintf(LogMsgTmpl, time.Now().String(), data)))
+
+}
 
 func ReadConfig(path string) Configuration {
 	b, err := os.ReadFile(path)
@@ -220,6 +279,9 @@ func ReadConfig(path string) Configuration {
 		log.Fatal(err)
 	}
 	var config ConfigFromFile
+	config = ConfigFromFile{
+		stream: os.Stdout,
+	}
 	err = json.Unmarshal(b, &config)
 	if err != nil {
 		log.Fatal(err)

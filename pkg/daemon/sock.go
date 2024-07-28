@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"bytes"
-	"embed"
+	_ "embed"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -11,14 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"text/template"
-	"time"
+
+	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 )
-
-// go:embed templates/*
-var vpnTemplates embed.FS
-
-const LogMsgTempl = "YOSAI Daemon ||| time: %s ||| %s\n"
 
 /*
 #########################################################
@@ -46,6 +41,19 @@ const MsgHeaderEnd = 27
 const MsgRequest = "REQUEST"
 const MsgResponse = "RESPONSE"
 
+/*
+################################
+### Protocol v2 status codes ###
+################################
+*/
+
+const REQUEST_OK = 0
+const REQUEST_TIMEOUT = 1
+const REQUEST_FAILED = 2
+const REQUEST_UNAUTHORIZED = 3
+const REQUEST_ACCEPTED = 4
+const REQUEST_UNRESOLVED = 5
+
 type SockMessage struct {
 	Type       string // the type of message being decoded
 	TypeLen    int8   // The length of the Type, used for convenience when Marshalling
@@ -57,14 +65,14 @@ type SockMessage struct {
 	Method     string `json:"method"`  // This is the method that we will be executing on the target endpoint. Think of this like the HTTP method
 }
 
-func NewSockMessage(msgType string, body []byte) *SockMessage { // TODO: this function needs to be more versatile, and allow for additional more arguments
+func NewSockMessage(msgType string, statCode int8, body []byte) *SockMessage { // TODO: this function needs to be more versatile, and allow for additional more arguments
 	return &SockMessage{Target: "",
 		Method:     "",
 		Body:       body,
 		Version:    SockMsgVers,
 		Type:       msgType,
 		TypeLen:    int8(len(msgType)),
-		StatusCode: 0,
+		StatusCode: statCode,
 		StatusMsg:  RequestOk,
 	}
 }
@@ -144,39 +152,16 @@ func Unmarshal(msg []byte) SockMessage {
 	}
 }
 
-/*
-##########################################################
-########### IMPLEMENTING THE ActionIn INTERFACE ##########
-##########################################################
-*/
-
-type ActionIn interface {
-	Target() string
-	Method() string
-	Arg() string
-}
-
-type ActionOut interface {
-	GetResult() string
-}
-
 type Context struct {
 	conn     net.Listener
 	keyring  *ApiKeyRing
+	Keytags  keytags.Keytagger
 	routes   map[string]func(req SockMessage) SockMessage
 	sockPath string
 	Config   Configuration
+	servers  []VpnServer
 	rwBuffer bytes.Buffer
 	stream   io.Writer
-	VpnTempl *template.Template
-}
-
-/*
-Log a message to the Contexts 'stream' io.Writer interface
-*/
-func (c *Context) Log(data ...string) {
-	c.stream.Write([]byte(fmt.Sprintf(LogMsgTempl, time.Now().String(), data)))
-
 }
 
 /*
@@ -185,6 +170,16 @@ Write a message back to the caller
 func (c *Context) Respond(conn net.Conn) {
 
 	conn.Write(c.rwBuffer.Bytes())
+
+}
+
+/*
+Log wrapper for the context struct
+
+	:param data: string arguments to send to the logger
+*/
+func (c *Context) Log(data ...string) {
+	c.Config.Log(data...)
 
 }
 
@@ -230,14 +225,10 @@ func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf Configu
 	if err != nil {
 		log.Fatal(err)
 	}
-	vpnTmpl, err := template.ParseFS(vpnTemplates, "templates/*")
-	if err != nil {
-		log.Fatal(err)
-	}
 	routes := map[string]func(req SockMessage) SockMessage{}
 	buf := make([]byte, 1024)
 	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring,
-		routes: routes, Config: conf, VpnTempl: vpnTmpl}
+		routes: routes, Config: conf, Keytags: keytags.ConstKeytag{}}
 
 }
 

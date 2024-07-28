@@ -199,15 +199,15 @@ func (v VaultConnection) VaultRouter(msg daemon.SockMessage) daemon.SockMessage 
 		var req VaultItem
 		err := json.Unmarshal(msg.Body, &req)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		err = v.AddKey(req.Name, req)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Key successfully added."))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Key successfully added."))
 	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolvable method"))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolvable method"))
 
 	}
 }

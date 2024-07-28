@@ -32,6 +32,17 @@ type SemaphoreConnection struct {
 	ProjectId int
 }
 
+type TaskInfo struct {
+	ID          int    `json:"id"`
+	TemplateID  int    `json:"template_id"`
+	Status      string `json:"status"`
+	Debug       bool   `json:"debug"`
+	Playbook    string `json:"playbook"`
+	Environment string `json:"environment"`
+	Secret      string `json:"secret"`
+	Limit       string `json:"limit"`
+}
+
 type TaskOutput struct {
 	TaskID int       `json:"task_id"`
 	Task   string    `json:"task"`
@@ -72,6 +83,11 @@ type StartTaskResponse struct {
 	Playbook    string `json:"playbook"`
 	Environment string `json:"environment"`
 	Limit       string `json:"limit"`
+}
+
+type EnvironmentVariables struct {
+	SecretsProviderUrl    string `json:"SECRETS_PROVIDER_URL"`
+	SecretsProviderApiKey string `json:"SECRETS_PROVIDER_API_KEY"`
 }
 
 type AddEnvironmentRequest struct {
@@ -250,7 +266,6 @@ func (s SemaphoreConnection) AddKey(name string, key daemon.Key) error {
 	if err == nil { // return if the key exists
 		return nil
 	}
-	fmt.Println(string(key.Prepare()))
 	path := fmt.Sprintf("%s/%v/keys", ProjectPath, s.ProjectId)
 	_, err = s.Post(path, bytes.NewReader([]byte(key.Prepare())))
 	if err != nil {
@@ -467,7 +482,6 @@ func (s SemaphoreConnection) Post(path string, body io.Reader) ([]byte, error) {
 		return b, &SemaphoreClientError{Msg: err.Error()}
 	}
 	if resp.StatusCode >= 400 {
-		fmt.Println(string(b))
 		return b, &SemaphoreClientError{Msg: resp.Status}
 	}
 	return b, nil
@@ -595,6 +609,57 @@ func (s SemaphoreConnection) GetTaskOutput(taskId int) ([]TaskOutput, error) {
 		return taskout, &SemaphoreClientError{Msg: "Could not unmarshall the response from getting task output." + err.Error()}
 	}
 	return taskout, nil
+
+}
+
+/*
+Get information relating to a task
+
+	:param taskId: the ID of the task that was ran
+*/
+func (s SemaphoreConnection) GetTaskInfo(taskId int) (TaskInfo, error) {
+	var taskout TaskInfo
+	b, err := s.Get(fmt.Sprintf("%s/%v/tasks/%v", ProjectPath, s.ProjectId, taskId))
+	if err != nil {
+		return taskout, err
+	}
+	err = json.Unmarshal(b, &taskout)
+	if err != nil {
+		return taskout, &SemaphoreClientError{Msg: "Could not unmarshall the response from getting task output." + err.Error()}
+	}
+	return taskout, nil
+}
+
+/*
+Poll for task completion
+
+	:param taskId: the ID of the task to be polled
+	:param max_tries: the number of times to poll the running task before timing out
+*/
+func (s SemaphoreConnection) PollTask(taskId int, max_tries int) error {
+	var attempts int
+	for {
+		attempts = attempts + 1
+		s.Config.Log("Polling task: ", fmt.Sprint(taskId), " for ", fmt.Sprint(attempts), " times.")
+		if attempts > max_tries {
+			s.Config.Log("Polling for job completion timed out after: ", fmt.Sprint(attempts), " attempts.")
+
+			return &SemaphoreTimeout{Tries: attempts}
+		}
+		resp, err := s.GetTaskInfo(taskId)
+		if err != nil {
+			return err
+		}
+		s.Config.Log("Job: ", fmt.Sprint(taskId), " is marked with status: ", resp.Status)
+		if resp.Status == "success" {
+			return nil
+		}
+		if resp.Status == "error" {
+			return &SemaphoreTimeout{Tries: attempts}
+		}
+		time.Sleep(time.Second * 5)
+
+	}
 
 }
 
@@ -811,8 +876,12 @@ func (s SemaphoreConnection) GetAllRepos() ([]NewRepoResponse, error) {
 }
 
 // Create an environment variable configuration, currently unimplemented
-func (s SemaphoreConnection) AddEnvironment() error {
-	_, err := s.GetEnvironmentId(YosaiEnvironment)
+func (s SemaphoreConnection) AddEnvironment(envVars EnvironmentVariables) error {
+	envBytes, err := json.Marshal(envVars)
+	if err != nil {
+		return &SemaphoreClientError{Msg: "Couldnt unmarshall the environment variable payload: " + err.Error()}
+	}
+	_, err = s.GetEnvironmentId(YosaiEnvironment)
 	if err == nil {
 		return nil // environment exists, dont add another with same name
 	}
@@ -821,7 +890,7 @@ func (s SemaphoreConnection) AddEnvironment() error {
 		Name:      YosaiEnvironment,
 		ProjectID: s.ProjectId,
 		JSON:      "{}",
-		Env:       "{}",
+		Env:       string(envBytes),
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -989,14 +1058,14 @@ func (s SemaphoreConnection) keyBootstrapper() daemon.SockMessage {
 		kn := reqKeys[i]
 		key, err := s.Keyring.GetKey(kn)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		err = s.AddKey(kn, s.NewKeyRequestBuilder(kn, key))
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Daemon keyring successfuly bootstrapped."))
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Daemon keyring successfuly bootstrapped."))
 }
 
 /*
@@ -1005,21 +1074,25 @@ Wrapping the functionality of the Project bootstrapper for top level cleanliness
 func (s SemaphoreConnection) projectBootstrapper() daemon.SockMessage {
 	err := s.NewProject(YosaiProject)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddRepository(s.Config.Repo(), s.Config.Branch())
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	err = s.AddEnvironment()
+	hashiKey, err := s.Keyring.GetKey(s.KeyTagger.HashicorpVaultKeyname())
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	err = s.AddEnvironment(EnvironmentVariables{SecretsProviderUrl: s.Config.SecretsBackendUrl(), SecretsProviderApiKey: hashiKey.GetSecret()})
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddJobTemplate(s.Config.PlaybookName(), fmt.Sprintf("%s:%s", s.Config.Repo(), s.Config.Branch()))
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Project successfuly bootstrapped."))
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Project successfuly bootstrapped."))
 
 }
 
@@ -1029,13 +1102,13 @@ Wrapping the inventory bootstrap functionality for top level cleanliness
 func (s SemaphoreConnection) inventoryBootstrapper() daemon.SockMessage {
 	err := s.AddInventory(YosaiServerInventory, s.Config.VpnServer())
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddHostToInv(YosaiServerInventory, s.Config.VpnServer())
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Inventory successfuly bootstrapped."))
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Inventory successfuly bootstrapped."))
 
 }
 
@@ -1043,7 +1116,7 @@ func (s SemaphoreConnection) BootstrapHandler(msg daemon.SockMessage) daemon.Soc
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	switch req.Target {
 	case "keys":
@@ -1052,8 +1125,25 @@ func (s SemaphoreConnection) BootstrapHandler(msg daemon.SockMessage) daemon.Soc
 		return s.projectBootstrapper()
 	case "inventory":
 		return s.inventoryBootstrapper()
+	case "all":
+		bootstrapFuncs := []func() daemon.SockMessage{
+			s.keyBootstrapper,
+			s.inventoryBootstrapper,
+			s.projectBootstrapper,
+		}
+		successMsg := ""
+		for i := range bootstrapFuncs {
+			call := bootstrapFuncs[i]
+			resp := call()
+			if resp.StatusCode != daemon.REQUEST_OK {
+				return resp
+			}
+			successMsg = successMsg + resp.StatusMsg + "\n"
+
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte(successMsg))
 	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
 
 	}
 
@@ -1072,25 +1162,25 @@ func (s SemaphoreConnection) ProjectHandler(msg daemon.SockMessage) daemon.SockM
 		var req SemaphoreRequest
 		err := json.Unmarshal(msg.Body, &req)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		err = s.NewProject(req.Target)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Project: "+req.Target+" successfully added."))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Project: "+req.Target+" successfully added."))
 	case "show":
 		proj, err := s.GetProjects()
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		b, err := json.MarshalIndent(proj, " ", "    ")
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
 
 	}
 
@@ -1105,35 +1195,45 @@ func (s SemaphoreConnection) TaskHandler(msg daemon.SockMessage) daemon.SockMess
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	switch msg.Method {
 	case "run":
 		resp, err := s.StartJob(req.Target)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		b, err := json.MarshalIndent(resp, " ", "    ")
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 	case "show":
 		taskid, err := strconv.Atoi(req.Target)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		taskout, err := s.GetTaskOutput(taskid)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		b, err := json.MarshalIndent(taskout, " ", "    ")
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, b)
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+	case "poll":
+		taskId, err := strconv.Atoi(req.Target)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+		}
+		err = s.PollTask(taskId, 30)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Task: "+req.Target+" completed."))
 	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
 
 	}
 }
@@ -1147,26 +1247,26 @@ func (s SemaphoreConnection) HostHandler(msg daemon.SockMessage) daemon.SockMess
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	switch msg.Method {
 	case "add":
 		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
 		err := s.AddHostToInv(YosaiServerInventory, hosts...)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgRequest, []byte(fmt.Sprintf("Host: %v added to the inventory", hosts)))
+		return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v added to the inventory", hosts)))
 
 	case "delete":
 		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
 		err := s.RemoveHostFromInv(YosaiServerInventory, hosts...)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, []byte(err.Error()))
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgRequest, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
+		return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
 	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
 	}
 }
 
@@ -1186,7 +1286,7 @@ func (s SemaphoreConnection) SemaphoreRouter(msg daemon.SockMessage) daemon.Sock
 	case "hosts":
 		return s.HostHandler(msg)
 	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, []byte("Unresolved Method."))
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
 	}
 }
 
@@ -1228,10 +1328,10 @@ func (s SemaphoreConnection) YamlInventoryBuilder(hosts []string, clientPubkey s
 			MachineType:          "vpn",
 			MachineSubType:       "server",
 			VpnNetworkAddress:    s.Config.VpnServerNetwork(),
-			VpnServerPort:        53280,
+			VpnServerPort:        s.Config.VpnServerPort(),
 			ClientPubkey:         clientPubkey,
 			ClientVpnAddress:     s.Config.VpnClientIpAddr(),
-			SecretsProvider:      "hashicorp"}
+			SecretsProvider:      s.Config.SecretsBackend()}
 	}
 	return YamlInventory{
 		All: yamlInvAll{
@@ -1260,4 +1360,12 @@ type KeyNotFound struct{ Keyname string }
 
 func (k *KeyNotFound) Error() string {
 	return fmt.Sprintf("Key '%s' was not found in the Semaphore Keystore", k.Keyname)
+}
+
+type SemaphoreTimeout struct {
+	Tries int
+}
+
+func (s *SemaphoreTimeout) Error() string {
+	return "Semaphore job execution poll timed out after: " + fmt.Sprint(s.Tries) + " calls to the server."
 }
