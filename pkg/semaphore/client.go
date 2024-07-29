@@ -26,7 +26,7 @@ type SemaphoreConnection struct {
 	Client    *http.Client
 	Keyring   daemon.DaemonKeyRing
 	KeyTagger keytags.Keytagger
-	Config    daemon.Configuration
+	Config    *daemon.ConfigFromFile
 	ServerUrl string
 	HttpProto string
 	ProjectId int
@@ -320,7 +320,7 @@ Create a new semaphore client
 		:param log: an io.Writer to write logfile to
 		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing, conf daemon.Configuration, keytagger keytags.Keytagger) SemaphoreConnection {
+func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing, conf *daemon.ConfigFromFile, keytagger keytags.Keytagger) SemaphoreConnection {
 	log.Write([]byte("Using HTTP mode: " + proto + "\n"))
 	client := &http.Client{}
 	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring, KeyTagger: keytagger}
@@ -668,7 +668,7 @@ Add an inventory to semaphore
 
 	:param hosts: a list of IP addresses to add to the inventory
 */
-func (s SemaphoreConnection) AddInventory(name string, hosts ...string) error {
+func (s SemaphoreConnection) AddInventory(name string) error {
 	_, err := s.GetInventoryByName(name)
 	if err == nil { // Returning on nil error because that means the inventory exists
 		return &SemaphoreClientError{Msg: "Inventory Exists! Please update rather than create a new."}
@@ -679,21 +679,12 @@ func (s SemaphoreConnection) AddInventory(name string, hosts ...string) error {
 	}
 	becomeKeyId, err := s.GetKeyId(s.KeyTagger.VpsSvcAccKeyname())
 	if err != nil {
-		return err
-	}
-	pubkey, err := s.Keyring.GetKey(s.KeyTagger.WgClientKeypairKeyname())
-	if err != nil {
-		return &SemaphoreClientError{Msg: err.Error() + s.KeyTagger.WgClientKeypairKeyname()}
-	}
-	inv := s.YamlInventoryBuilder(hosts, pubkey.GetPublic())
-	b, err := yaml.Marshal(inv)
-	if err != nil {
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
 	body := NewInventoryRequest{
 		Name:        name,
 		ProjectId:   s.ProjectId,
-		Inventory:   string(b),
+		Inventory:   string([]byte("all:\n")),
 		SshKeyId:    sshKeyId,
 		BecomeKeyId: becomeKeyId,
 		Type:        "static-yaml",
@@ -800,23 +791,15 @@ func (s SemaphoreConnection) RemoveHostFromInv(name string, host ...string) erro
 		}
 		delete(inv.All.Hosts, host[i])
 	}
-	pubkey, err := s.Keyring.GetKey(s.KeyTagger.WgClientKeypairKeyname())
-	if err != nil {
-		return &SemaphoreClientError{Msg: err.Error() + s.KeyTagger.WgClientKeypairKeyname()}
-	}
-	var hosts []string
-	for k := range inv.All.Hosts {
-		hosts = append(hosts, k)
-	}
 
-	return s.UpdateInventory(name, s.YamlInventoryBuilder(hosts, pubkey.GetPublic()))
+	return s.UpdateInventory(name, inv)
 
 }
 
 /*
 Add hosts to inventory
 */
-func (s SemaphoreConnection) AddHostToInv(name string, host ...string) error {
+func (s SemaphoreConnection) AddHostToInv(name string, host ...daemon.VpnServer) error {
 
 	resp, err := s.GetInventoryByName(name)
 	if err != nil {
@@ -827,17 +810,12 @@ func (s SemaphoreConnection) AddHostToInv(name string, host ...string) error {
 	if err != nil {
 		return &SemaphoreClientError{Msg: "Error unmarshalling inventory from server: " + resp.Inventory + err.Error()}
 	}
-	pubkey, err := s.Keyring.GetKey(s.KeyTagger.WgClientKeypairKeyname())
-	if err != nil {
-		return &SemaphoreClientError{Msg: err.Error() + s.KeyTagger.WgClientKeypairKeyname()}
-	}
 
-	var hosts []string
-	for k := range inv.All.Hosts {
-		hosts = append(hosts, k)
+	newHosts := s.YamlInventoryBuilder(host)
+	for addr, host := range newHosts.All.Hosts {
+		inv.All.Hosts[addr] = host
 	}
-	hosts = append(hosts, host...)
-	return s.UpdateInventory(name, s.YamlInventoryBuilder(hosts, pubkey.GetPublic()))
+	return s.UpdateInventory(name, inv)
 }
 
 /*
@@ -1100,11 +1078,7 @@ func (s SemaphoreConnection) projectBootstrapper() daemon.SockMessage {
 Wrapping the inventory bootstrap functionality for top level cleanliness
 */
 func (s SemaphoreConnection) inventoryBootstrapper() daemon.SockMessage {
-	err := s.AddInventory(YosaiServerInventory, s.Config.VpnServer())
-	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-	}
-	err = s.AddHostToInv(YosaiServerInventory, s.Config.VpnServer())
+	err := s.AddInventory(YosaiServerInventory)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
@@ -1156,8 +1130,6 @@ Router for handling all stuff relating to Projects
 */
 func (s SemaphoreConnection) ProjectHandler(msg daemon.SockMessage) daemon.SockMessage {
 	switch msg.Method {
-	case "bootstrap":
-		return s.projectBootstrapper()
 	case "add":
 		var req SemaphoreRequest
 		err := json.Unmarshal(msg.Body, &req)
@@ -1252,7 +1224,15 @@ func (s SemaphoreConnection) HostHandler(msg daemon.SockMessage) daemon.SockMess
 	switch msg.Method {
 	case "add":
 		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
-		err := s.AddHostToInv(YosaiServerInventory, hosts...)
+		vpnHosts := []daemon.VpnServer{}
+		for i := range hosts {
+			server, err := s.Config.GetServer(hosts[i])
+			if err != nil {
+				return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+			}
+			vpnHosts = append(vpnHosts, server)
+		}
+		err := s.AddHostToInv(YosaiServerInventory, vpnHosts...)
 		if err != nil {
 			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
@@ -1265,6 +1245,17 @@ func (s SemaphoreConnection) HostHandler(msg daemon.SockMessage) daemon.SockMess
 			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 		}
 		return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
+	case "show":
+		inv, err := s.GetAllInventories()
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		}
+		b, err := json.Marshal(inv)
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+
 	default:
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
 	}
@@ -1304,14 +1295,19 @@ type yamlInvAll struct {
 }
 
 type yamlVars struct {
-	AnsibleSshCommonArgs string `yaml:"ansible_ssh_common_args"`
-	MachineType          string `yaml:"machine_type"`
-	MachineSubType       string `yaml:"machine_subtype"`
-	VpnNetworkAddress    string `yaml:"vpn_network_address"`
-	VpnServerPort        int    `yaml:"vpn_server_port"`
-	ClientPubkey         string `yaml:"client_public_key"`
-	ClientVpnAddress     string `yaml:"client_vpn_address"`
-	SecretsProvider      string `yaml:"secrets_provider"`
+	AnsibleSshCommonArgs string                   `yaml:"ansible_ssh_common_args"`
+	MachineType          string                   `yaml:"machine_type"`
+	MachineSubType       string                   `yaml:"machine_subtype"`
+	VpnNetworkAddress    string                   `yaml:"vpn_network_address"`
+	VpnServerPort        int                      `yaml:"vpn_server_port"`
+	Clients              map[string]yamlVpnClient `yaml:"clients"`
+	SecretsProvider      string                   `yaml:"secrets_provider"`
+}
+
+type yamlVpnClient struct {
+	Name   string `yaml:"name"`
+	Ipv4   string `yaml:"ipv4"`
+	Pubkey string `yaml:"pubkey"`
 }
 
 /*
@@ -1319,18 +1315,24 @@ YAML inventory builder function
 
 	:param hosts: a list of host IP addresses to add to the VPN server inventory
 */
-func (s SemaphoreConnection) YamlInventoryBuilder(hosts []string, clientPubkey string) YamlInventory {
+func (s SemaphoreConnection) YamlInventoryBuilder(hosts []daemon.VpnServer) YamlInventory {
 
 	hostmap := map[string]yamlVars{}
+	clientmap := map[string]yamlVpnClient{}
+	clients := s.Config.VpnClients()
+	for i := range clients {
+		client := clients[i]
+		clientmap[client.Name] = yamlVpnClient{Name: client.Name, Ipv4: client.VpnIpv4.String(), Pubkey: client.Pubkey}
+	}
 	for i := range hosts {
-		hostmap[hosts[i]] = yamlVars{
+		server := hosts[i]
+		hostmap[hosts[i].WanIpv4] = yamlVars{
 			AnsibleSshCommonArgs: "-o StrictHostKeyChecking=no",
 			MachineType:          "vpn",
 			MachineSubType:       "server",
-			VpnNetworkAddress:    s.Config.VpnServerNetwork(),
+			VpnNetworkAddress:    server.VpnIpv4.String(),
 			VpnServerPort:        s.Config.VpnServerPort(),
-			ClientPubkey:         clientPubkey,
-			ClientVpnAddress:     s.Config.VpnClientIpAddr(),
+			Clients:              clientmap,
 			SecretsProvider:      s.Config.SecretsBackend()}
 	}
 	return YamlInventory{

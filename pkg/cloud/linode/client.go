@@ -79,7 +79,7 @@ type LinodeConnection struct {
 	Client    *http.Client
 	Keyring   daemon.DaemonKeyRing
 	KeyTagger keytags.Keytagger
-	Config    daemon.Configuration
+	Config    *daemon.ConfigFromFile
 }
 
 // Construct a NewLinodeBody struct for a CreateNewLinode call
@@ -393,11 +393,15 @@ func (ln LinodeConnection) Bootstrap() error { return nil }
 */
 
 type DeleteLinodeRequest struct {
-	Id string `json:"id"`
+	Name string `json:"name"`
+	Id   string `json:"id"`
 }
 
 type AddLinodeRequest struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	Region string `json:"region"`
+	Type   string `json:"type"`
 }
 
 type PollLinodeRequest struct {
@@ -405,7 +409,13 @@ type PollLinodeRequest struct {
 }
 
 func (ln LinodeConnection) DeleteLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
-	resp, err := ln.GetByName(ln.Config.ServerName())
+	var req DeleteLinodeRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+
+	resp, err := ln.GetByName(req.Name)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
@@ -425,25 +435,27 @@ Wraps the creation of a linode to make the LinodeRouter function slimmer
 	:param msg: a daemon.SockMessage struct with request info
 */
 func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+	ln.Config.Log("Recieved request to create a new linode server.")
 	var payload AddLinodeRequest
 	err := json.Unmarshal(msg.Body, &payload)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	newLinodeReq, err := NewLinodeBodyBuilder(ln.Config.Image(),
-		ln.Config.Region(),
-		ln.Config.LinodeType(),
-		ln.Config.ServerName(),
+	newLinodeReq, err := NewLinodeBodyBuilder(payload.Image,
+		payload.Region,
+		payload.Type,
+		payload.Name,
 		ln.Keyring)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	resp, err := ln.CreateNewLinode(newLinodeReq)
 	if err != nil {
+		ln.Config.Log("There was an error creating server: ", payload.Name, err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	ln.Config.SetVpnServer(resp.Ipv4[0])
-	ln.Config.SetVpnServerId(resp.Id)
+	ln.Config.Log("Server: ", payload.Name, " Created successfully.")
+
 	b, _ := json.Marshal(resp)
 	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 
@@ -479,9 +491,21 @@ func (ln LinodeConnection) LinodeRouter(msg daemon.SockMessage) daemon.SockMessa
 		b, _ := json.Marshal(servers)
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 	case "delete":
-		return ln.DeleteLinodeHandler(msg)
+		resp := ln.DeleteLinodeHandler(msg)
+		if resp.StatusCode != daemon.REQUEST_OK {
+			return *daemon.NewSockMessage(daemon.MsgResponse, resp.StatusCode, []byte("There was an error killing the requested server."))
+		}
+		return resp
 	case "add":
-		return ln.AddLinodeHandler(msg)
+		resp := ln.AddLinodeHandler(msg)
+		var addLnResp GetLinodeResponse
+		err := json.Unmarshal(resp.Body, &addLnResp)
+		if err != nil {
+			ln.Config.Log("There was an error unmarshalling the response from internal route: ", msg.Target, msg.Method, err.Error())
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte("Error unmarshalling AddLinodeHandler response: "+err.Error()))
+		}
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, resp.Body)
+
 	case "poll":
 		return ln.PollLinodeHandler(msg)
 
