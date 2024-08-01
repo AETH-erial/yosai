@@ -56,7 +56,7 @@ func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
-		clientKeypair, err := c.keyring.GetKey(req.Server + "_" + c.Keytags.WgClientKeypairKeyname())
+		clientKeypair, err := c.keyring.GetKey(req.Client + "_" + c.Keytags.WgClientKeypairKeyname())
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
@@ -68,7 +68,7 @@ func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
 			Peers: []wg.WireguardTemplatePeer{
 				wg.WireguardTemplatePeer{
 					Pubkey:  serverKeypair.GetPublic(),
-					Address: server.VpnIpv4.String(),
+					Address: server.WanIpv4,
 					Port:    c.Config.VpnServerPort(),
 				},
 			}}

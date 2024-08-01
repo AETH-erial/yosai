@@ -1302,6 +1302,8 @@ type yamlVars struct {
 	VpnServerPort        int                      `yaml:"vpn_server_port"`
 	Clients              map[string]yamlVpnClient `yaml:"clients"`
 	SecretsProvider      string                   `yaml:"secrets_provider"`
+	VpnNetMask           int                      `yaml:"vpn_netmask"`
+	Name                 string                   `yaml:"name"`
 }
 
 type yamlVpnClient struct {
@@ -1331,9 +1333,11 @@ func (s SemaphoreConnection) YamlInventoryBuilder(hosts []daemon.VpnServer) Yaml
 			MachineType:          "vpn",
 			MachineSubType:       "server",
 			VpnNetworkAddress:    server.VpnIpv4.String(),
-			VpnServerPort:        s.Config.VpnServerPort(),
+			VpnServerPort:        server.Port,
 			Clients:              clientmap,
-			SecretsProvider:      s.Config.SecretsBackend()}
+			SecretsProvider:      s.Config.SecretsBackend(),
+			VpnNetMask:           s.Config.Service.VpnMask,
+			Name:                 server.Name}
 	}
 	return YamlInventory{
 		All: yamlInvAll{

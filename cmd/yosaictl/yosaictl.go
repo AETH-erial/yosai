@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
@@ -152,6 +153,19 @@ func jsonBuilder(v interface{}, value string) []byte {
 		b, _ := json.Marshal(vaultReq)
 		return b
 	}
+	renderConfigReq, ok := v.(daemon.ConfigRenderRequest)
+	if ok {
+		vals := strings.Split(value, ",")
+		if len(vals) != 2 {
+			log.Fatal("To render a config, you must pass the name of the server, followed by the client, i.e. yosai-vpn-server,iphone")
+		}
+		renderConfigReq = daemon.ConfigRenderRequest{
+			Server: vals[0],
+			Client: vals[1],
+		}
+		b, _ := json.Marshal(renderConfigReq)
+		return b
+	}
 	return []byte("{\"data\":\"test\"}")
 
 }
@@ -185,11 +199,19 @@ func main() {
 		rb.Write(jsonBuilder(hashicorp.VaultItem{}, args[2]))
 	case "daemon-add":
 		rb.Write(jsonBuilder(linode.AddLinodeRequest{}, args[2]))
+	case "daemon":
+		rb.Write(jsonBuilder(daemon.ConfigRenderRequest{}, args[2]))
 	case "config":
 		switch args[1] {
 		case "add-server":
-			dataSp := strings.Split(args[2], ",")
-			b, _ := json.Marshal(daemon.VpnServer{WanIpv4: dataSp[0], Name: dataSp[1]})
+			argSplit := strings.Split(args[2], ",")
+			ipSplit := strings.Split(argSplit[0], ":")
+			ip := ipSplit[0]
+			port, err := strconv.Atoi(ipSplit[1])
+			if err != nil {
+				log.Fatal("Im not checking this thoroughly, but your port after the ':' should atleast be a valid number.")
+			}
+			b, _ := json.Marshal(daemon.VpnServer{WanIpv4: ip, Port: port, Name: argSplit[1]})
 			rb.Write(b)
 		case "add-peer":
 			dataSp := strings.Split(args[2], ",")

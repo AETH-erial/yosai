@@ -424,7 +424,7 @@ func (ln LinodeConnection) DeleteLinodeHandler(msg daemon.SockMessage) daemon.So
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_ACCEPTED, []byte(err.Error()))
 	}
-	responseMessage := []byte("Server: " + ln.Config.ServerName() + " was deleted.")
+	responseMessage := []byte("Server: " + fmt.Sprint(resp.Id) + " was deleted.")
 	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, responseMessage)
 
 }
@@ -467,7 +467,13 @@ Wraps the polling feature of the client in a Handler function
 	:param msg: a daemon.SockMessage that contains the request info
 */
 func (ln LinodeConnection) PollLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
-	err := ln.ServerPoll(ln.Config.ServerName(), 15)
+	var req PollLinodeRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+	}
+
+	err = ln.ServerPoll(req.Address, 15)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
 	}

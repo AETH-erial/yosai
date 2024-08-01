@@ -26,25 +26,14 @@ var EnvironmentVariables = []string{
 const DefaultConfigLoc = "./.config.json"
 
 type Configuration interface {
-	SetServerName(val string)
 	SetRepo(val string)
 	SetBranch(val string)
 	SetPlaybookName(val string)
 	SetImage(val string)
 	SetRegion(val string)
 	SetLinodeType(val string)
-	SetVpnServer(val string)
-	SetVpnServerId(val int)
-	SetVpnNetwork(val string) error
 	SetSecretsBackend(val string)
 	SetSecretsBackendUrl(val string)
-	VpnClientIpAddr() string
-	VpnServerIpAddr() string
-	VpnServerPort() int
-	VpnServerNetwork() string
-	VpnServerId() int
-	VpnServer() string
-	ServerName() string
 	GetServer(priority int8) (VpnServer, error)
 	SecretsBackend() string
 	SecretsBackendUrl() string
@@ -148,7 +137,7 @@ func (c *ConfigFromFile) ConfigRouter(msg SockMessage) SockMessage {
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
-		name := c.AddServer(addr, server.Name, server.WanIpv4)
+		name := c.AddServer(addr, server.Name, server.WanIpv4, server.Port)
 		c.Log("address: ", addr.String(), "name:", name)
 		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+name+" Successfully added."))
 
@@ -173,16 +162,10 @@ type ansibleConfig struct {
 type serviceConfig struct {
 	Servers           map[string]VpnServer
 	Clients           map[string]VpnClient
-	VpnServer         string `json:"vpn_server"`
-	VpnServerId       int    `json:"vpn_server_id"`
-	VpnServerName     string `json:"vpn_server_name"`
-	VpnServerNetwork  string `json:"vpn_server_network"`
 	VpnAddressSpace   net.IPNet
 	VpnAddresses      map[string]bool // Each key is a IPv4 in the VPN, and its corresponding value is what denotes if its in use or not. False == 'In use', True == 'available'
 	VpnMask           int             // The mask of the VPN
-	VpnServerIPv4     string          `json:"vpn_server_ipv4"`
 	VpnServerPort     int             `json:"vpn_server_port"`
-	VpnClientIPv4     string          `json:"vpn_client_ipv4"`
 	SecretsBackend    string          `json:"secrets_backend"`
 	SecretsBackendUrl string          `json:"secrets_backend_url"`
 }
@@ -220,7 +203,7 @@ Add a VPN server to the Service configuration
 
 	:param server: a VpnServer struct modeling the data that comprises of a VPN server
 */
-func (c *ConfigFromFile) AddServer(addr net.IP, name string, wan string) string {
+func (c *ConfigFromFile) AddServer(addr net.IP, name string, wan string, port int) string {
 	server, ok := c.Service.Servers[name]
 	var serverLabel string
 	if ok {
@@ -228,7 +211,7 @@ func (c *ConfigFromFile) AddServer(addr net.IP, name string, wan string) string 
 	} else {
 		serverLabel = name
 	}
-	c.Service.Servers[serverLabel] = VpnServer{Name: serverLabel, WanIpv4: wan, VpnIpv4: addr}
+	c.Service.Servers[serverLabel] = VpnServer{Name: serverLabel, WanIpv4: wan, VpnIpv4: addr, Port: port}
 	return serverLabel
 
 }
@@ -243,6 +226,7 @@ type VpnServer struct {
 	Name    string `json:"name"`     // this Label is what is used to index that server and its data within the Daemons model of the VPN environment
 	WanIpv4 string `json:"wan_ipv4"` // Public IPv4
 	VpnIpv4 net.IP // the IP address that the server will occupy on the network
+	Port    int
 }
 
 /*
@@ -340,27 +324,8 @@ func (c *ConfigFromFile) SetPlaybookName(val string)      { c.Ansible.PlaybookNa
 func (c *ConfigFromFile) SetImage(val string)             { c.Cloud.Image = val }
 func (c *ConfigFromFile) SetRegion(val string)            { c.Cloud.Region = val }
 func (c *ConfigFromFile) SetLinodeType(val string)        { c.Cloud.LinodeType = val }
-func (c *ConfigFromFile) SetVpnServer(val string)         { c.Service.VpnServer = val }
-func (c *ConfigFromFile) SetVpnServerId(val int)          { c.Service.VpnServerId = val }
-func (c *ConfigFromFile) SetServerName(val string)        { c.Service.VpnServerName = val }
 func (c *ConfigFromFile) SetSecretsBackend(val string)    { c.Service.SecretsBackend = val }
 func (c *ConfigFromFile) SetSecretsBackendUrl(val string) { c.Service.SecretsBackendUrl = val }
-func (c *ConfigFromFile) SetVpnNetwork(val string) error {
-	addr, ntwrk, err := net.ParseCIDR(val)
-	if err != nil {
-		return err
-	}
-	ntwrkSp := strings.Split(ntwrk.String(), "/")
-	cidr := ntwrkSp[1]
-	parsed, _ := netip.ParseAddr(addr.String())
-	clientIp := parsed.Next()
-	serverIp := clientIp.Next()
-
-	c.Service.VpnServerNetwork = ntwrk.String()
-	c.Service.VpnServerIPv4 = serverIp.String() + "/" + cidr
-	c.Service.VpnClientIPv4 = clientIp.String() + "/" + cidr
-	return nil
-}
 
 func (c *ConfigFromFile) Repo() string {
 	return c.Ansible.Repo
@@ -389,26 +354,7 @@ func (c *ConfigFromFile) Region() string {
 func (c *ConfigFromFile) LinodeType() string {
 	return c.Cloud.LinodeType
 }
-func (c *ConfigFromFile) VpnServerId() int {
-	return c.Service.VpnServerId
-}
 
-func (c *ConfigFromFile) VpnServer() string {
-	return c.Service.VpnServer
-}
-
-func (c *ConfigFromFile) ServerName() string {
-	return c.Service.VpnServerName
-}
-func (c *ConfigFromFile) VpnServerIpAddr() string {
-	return c.Service.VpnServerIPv4
-}
-func (c *ConfigFromFile) VpnClientIpAddr() string {
-	return c.Service.VpnClientIPv4
-}
-func (c *ConfigFromFile) VpnServerNetwork() string {
-	return c.Service.VpnServerNetwork
-}
 func (c *ConfigFromFile) VpnServerPort() int {
 	return c.Service.VpnServerPort
 }
@@ -444,19 +390,22 @@ func ReadConfig(path string) *ConfigFromFile {
 	if err != nil {
 		log.Fatal(err)
 	}
-	addresses, err := GetNetworkAddresses(config.Service.VpnServerNetwork)
+	mask, _ := config.Service.VpnAddressSpace.Mask.Size()
+	vpnNetwork := fmt.Sprintf("%s/%v", config.Service.VpnAddressSpace.IP.String(), mask)
+	addresses, err := GetNetworkAddresses(vpnNetwork)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	_, ntwrk, _ := net.ParseCIDR(config.Service.VpnServerNetwork)
-
-	addrSpace := map[string]bool{}
-	for i := range addresses.Ipv4s {
-		addrSpace[addresses.Ipv4s[i].String()] = false
+	_, ntwrk, _ := net.ParseCIDR(vpnNetwork)
+	if config.Service.VpnAddresses == nil {
+		addrSpace := map[string]bool{}
+		for i := range addresses.Ipv4s {
+			addrSpace[addresses.Ipv4s[i].String()] = false
+		}
+		config.Service.VpnAddresses = addrSpace
 	}
 	config.Service.VpnAddressSpace = *ntwrk
-	config.Service.VpnAddresses = addrSpace
 	config.Service.VpnMask = addresses.Mask
 	return config
 
@@ -482,6 +431,7 @@ func BlankConfig(path string) error {
 			Repo:   "",
 			Branch: "",
 		},
+		Service: serviceConfig{},
 	}
 	b, err := json.Marshal(config)
 	if err != nil {
