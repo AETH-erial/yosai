@@ -90,11 +90,83 @@ func BlankEnv(path string) error {
 
 }
 
+// Router for all peer related functions
+func (c *ConfigFromFile) PeerRouter(msg SockMessage) SockMessage {
+	switch msg.Method {
+	case "add":
+		var peer VpnClient
+		err := json.Unmarshal(msg.Body, &peer)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		addr, err := c.GetAvailableVpnIpv4()
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+c.AddClient(addr, peer.Pubkey, peer.Name)+" Successfully added."))
+	case "delete":
+		var req VpnClient
+		err := json.Unmarshal(msg.Body, &req)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		peer, err := c.GetClient(req.Name)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+
+		delete(c.Service.Clients, peer.Name)
+		err = c.FreeAddress(peer.VpnIpv4.String())
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+peer.Name+" Successfully deleted from the config."))
+
+	default:
+		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved method: "+msg.Method))
+	}
+
+}
+
+// Router for all server related functions
+func (c *ConfigFromFile) ServerRouter(msg SockMessage) SockMessage {
+	var req VpnServer
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	switch msg.Method {
+	case "add":
+		addr, err := c.GetAvailableVpnIpv4()
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		name := c.AddServer(addr, req.Name, req.WanIpv4, req.Port)
+		c.Log("address: ", addr.String(), "name:", name)
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+name+" Successfully added."))
+	case "delete":
+		server, err := c.GetServer(req.Name)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+
+		delete(c.Service.Servers, server.Name)
+		err = c.FreeAddress(server.VpnIpv4.String())
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+server.Name+" Successfully deleted from the config."))
+
+	default:
+		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved method: "+msg.Method))
+	}
+
+}
+
 // Implemeting the interface to make this callable via the CLI
 func (c *ConfigFromFile) ConfigRouter(msg SockMessage) SockMessage {
 	switch msg.Method {
 	case "show":
-
 		b, err := json.MarshalIndent(&c, "", "   ")
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
@@ -116,31 +188,6 @@ func (c *ConfigFromFile) ConfigRouter(msg SockMessage) SockMessage {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
 		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration reloaded successfully."))
-	case "add-peer":
-		var peer VpnClient
-		err := json.Unmarshal(msg.Body, &peer)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		addr, err := c.GetAvailableVpnIpv4()
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+c.AddClient(addr, peer.Pubkey, peer.Name)+" Successfully added."))
-	case "add-server":
-		var server VpnServer
-		err := json.Unmarshal(msg.Body, &server)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		addr, err := c.GetAvailableVpnIpv4()
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		name := c.AddServer(addr, server.Name, server.WanIpv4, server.Port)
-		c.Log("address: ", addr.String(), "name:", name)
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+name+" Successfully added."))
-
 	default:
 		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved Method"))
 	}

@@ -42,7 +42,7 @@ func main() {
 		log.Fatal("Error loading env file: ", err)
 	}
 	conf := daemon.ReadConfig(daemon.DefaultConfigLoc)
-	apikeyring := daemon.NewKeyRing()
+	apikeyring := daemon.NewKeyRing(conf, keytags.ConstKeytag{})
 	// Here we are demonstrating how you add a key to a keyring, in this
 	// case it is the top level keyring.
 	apikeyring.AddKey(keytags.HASHICORP_VAULT_KEYNAME, daemon.BearerAuth{
@@ -55,23 +55,22 @@ func main() {
 		Client:    &http.Client{},
 	}
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
-	err = apikeyring.Bootstrap(keytags.ConstKeytag{})
+	err = apikeyring.Bootstrap()
 	if err != nil {
 		log.Fatal(err)
 
 	}
-	fmt.Println("finished bootstrappin")
 	// creating the connection client with Hashicorp vault, and using the keyring we created above
 	// as this clients keyring. This allows the API key we added earlier to be used when calling the API
 	lnConn := linode.LinodeConnection{Client: &http.Client{}, Keyring: apikeyring, Config: conf, KeyTagger: keytags.ConstKeytag{}}
-	fmt.Println("made linode connection")
-	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", os.Stdout, apikeyring, conf, keytags.ConstKeytag{})
-	fmt.Println("made semaphore connection")
+	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", apikeyring, conf, keytags.ConstKeytag{})
 	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 
 	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf)
 	ctx.Register("keyring", apikeyring.KeyringRouter)
 	ctx.Register("config", conf.ConfigRouter)
+	ctx.Register("config-peer", conf.PeerRouter)
+	ctx.Register("config-server", conf.ServerRouter)
 	ctx.Register("cloud", lnConn.LinodeRouter)
 	ctx.Register("ansible", semaphoreConn.BootstrapHandler)
 	ctx.Register("ansible-hosts", semaphoreConn.HostHandler)

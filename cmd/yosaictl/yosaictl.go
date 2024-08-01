@@ -37,31 +37,44 @@ func GetConfig() daemon.ConfigFromFile {
 
 }
 
-func CreateServer(name string) daemon.SockMessage {
-	b, _ := json.Marshal(linode.AddLinodeRequest{Name: name})
-	request := daemon.SockMessage{
-		Type:    daemon.MsgRequest,
-		TypeLen: int8(len(daemon.MsgRequest)),
-		Version: daemon.SockMsgVers,
-		Body:    b,
-		Target:  "cloud",
-		Method:  "add",
+func MakeArgMap(arg string) map[string]string {
+	argSplit := strings.Split(arg, ",")
+	argMap := map[string]string{}
+	for i := range argSplit {
+		a := strings.Split(strings.TrimSpace(argSplit[i]), "=")
+		if len(a) != 2 {
+			log.Fatal("Key values must be passed comma delimmited, seperated with an '='. i.e. 'public=12345abcdef,secret=qwerty69420'")
+		}
+		argMap[strings.TrimSpace(strings.ToLower(a[0]))] = strings.TrimSpace(a[1])
 	}
-	return daemonRequest(request)
-
+	return argMap
 }
 
-func AddServerToHosts(wan string, name string) daemon.SockMessage {
-	b, _ := json.Marshal(daemon.VpnServer{WanIpv4: wan, Name: name})
-	request := daemon.SockMessage{
-		Type:    daemon.MsgRequest,
-		TypeLen: int8(len(daemon.MsgRequest)),
-		Version: daemon.SockMsgVers,
-		Body:    b,
-		Target:  "config",
-		Method:  "add-server",
+func ServerAddRequestBuilder(arg string) []byte {
+	argMap := MakeArgMap(arg)
+	port, err := strconv.Atoi(argMap["port"])
+	if err != nil {
+		log.Fatal("Port passed: ", argMap["port"], " is not a valid integer.")
 	}
-	return daemonRequest(request)
+	if port <= 0 || port > 65535 {
+		log.Fatal("Port passed: ", port, " Was not in the valid range of between 1-65535.")
+	}
+
+	b, _ := json.Marshal(daemon.VpnServer{WanIpv4: argMap["wan"], Port: port, Name: argMap["name"]})
+
+	return b
+}
+
+func PeerAddRequestBuilder(arg string) []byte {
+	argMap := MakeArgMap(arg)
+	b, _ := json.Marshal(daemon.VpnClient{Name: argMap["name"], Pubkey: argMap["pubkey"]})
+	return b
+}
+
+func KeyringRequstBuilder(arg string) []byte {
+	argMap := MakeArgMap(arg)
+	b, _ := json.Marshal(hashicorp.VaultItem{Public: argMap["public"], Secret: argMap["secret"], Type: argMap["type"], Name: argMap["name"]})
+	return b
 
 }
 
@@ -194,32 +207,15 @@ func main() {
 	case "ansible":
 		rb.Write(jsonBuilder(semaphore.SemaphoreRequest{}, args[2]))
 	case "keyring":
-		rb.Write(jsonBuilder(hashicorp.VaultItem{}, fmt.Sprintf("%s,,,", args[2])))
+		rb.Write(KeyringRequstBuilder(args[2]))
 	case "vault":
-		rb.Write(jsonBuilder(hashicorp.VaultItem{}, args[2]))
-	case "daemon-add":
-		rb.Write(jsonBuilder(linode.AddLinodeRequest{}, args[2]))
+		rb.Write(KeyringRequstBuilder(args[2]))
 	case "daemon":
 		rb.Write(jsonBuilder(daemon.ConfigRenderRequest{}, args[2]))
-	case "config":
-		switch args[1] {
-		case "add-server":
-			argSplit := strings.Split(args[2], ",")
-			ipSplit := strings.Split(argSplit[0], ":")
-			ip := ipSplit[0]
-			port, err := strconv.Atoi(ipSplit[1])
-			if err != nil {
-				log.Fatal("Im not checking this thoroughly, but your port after the ':' should atleast be a valid number.")
-			}
-			b, _ := json.Marshal(daemon.VpnServer{WanIpv4: ip, Port: port, Name: argSplit[1]})
-			rb.Write(b)
-		case "add-peer":
-			dataSp := strings.Split(args[2], ",")
-			b, _ := json.Marshal(daemon.VpnClient{Name: dataSp[0], Pubkey: dataSp[1]})
-			rb.Write(b)
-
-		}
-
+	case "config-server":
+		rb.Write(ServerAddRequestBuilder(args[2]))
+	case "config-peer":
+		rb.Write(PeerAddRequestBuilder(args[2]))
 	}
 	var msg daemon.SockMessage
 

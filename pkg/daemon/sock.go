@@ -178,8 +178,10 @@ Log wrapper for the context struct
 
 	:param data: string arguments to send to the logger
 */
-func (c *Context) Log(data ...string) {
-	c.Config.Log(data...)
+func (c *Context) Log(msg ...string) {
+	dMsg := []string{"daemon.Context:"}
+	dMsg = append(dMsg, msg...)
+	c.Config.Log(dMsg...)
 
 }
 

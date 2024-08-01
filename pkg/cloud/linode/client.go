@@ -82,6 +82,13 @@ type LinodeConnection struct {
 	Config    *daemon.ConfigFromFile
 }
 
+// Logging wrapper
+func (ln LinodeConnection) Log(msg ...string) {
+	lnMsg := []string{"LinodeConnection:"}
+	lnMsg = append(lnMsg, msg...)
+	ln.Config.Log(lnMsg...)
+}
+
 // Construct a NewLinodeBody struct for a CreateNewLinode call
 func NewLinodeBodyBuilder(image string, region string, linodeType string, label string, keyring daemon.DaemonKeyRing) (NewLinodeBody, error) {
 	var newLnBody NewLinodeBody
@@ -365,16 +372,16 @@ func (ln LinodeConnection) ServerPoll(name string, max_tries int) error {
 		if count > max_tries {
 			return &LinodeTimeOutError{Tries: max_tries}
 		}
-		ln.Config.Log("Polling for server status times: ", fmt.Sprint(count))
+		ln.Log("Polling for server status times: ", fmt.Sprint(count))
 		resp, err := ln.GetByName(name)
 		if err != nil {
 			return err
 		}
 		if resp.Status == "running" {
-			ln.Config.Log("Server: ", resp.Ipv4[0], " showing as: ", resp.Status)
+			ln.Log("Server: ", resp.Ipv4[0], " showing as: ", resp.Status)
 			return nil
 		}
-		ln.Config.Log("Server inactive, showing status: ", resp.Status)
+		ln.Log("Server inactive, showing status: ", resp.Status)
 
 		time.Sleep(time.Second * 3)
 	}
@@ -435,7 +442,7 @@ Wraps the creation of a linode to make the LinodeRouter function slimmer
 	:param msg: a daemon.SockMessage struct with request info
 */
 func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
-	ln.Config.Log("Recieved request to create a new linode server.")
+	ln.Log("Recieved request to create a new linode server.")
 	var payload AddLinodeRequest
 	err := json.Unmarshal(msg.Body, &payload)
 	if err != nil {
@@ -451,10 +458,10 @@ func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockM
 	}
 	resp, err := ln.CreateNewLinode(newLinodeReq)
 	if err != nil {
-		ln.Config.Log("There was an error creating server: ", payload.Name, err.Error())
+		ln.Log("There was an error creating server: ", payload.Name, err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	ln.Config.Log("Server: ", payload.Name, " Created successfully.")
+	ln.Log("Server: ", payload.Name, " Created successfully.")
 
 	b, _ := json.Marshal(resp)
 	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
@@ -507,7 +514,7 @@ func (ln LinodeConnection) LinodeRouter(msg daemon.SockMessage) daemon.SockMessa
 		var addLnResp GetLinodeResponse
 		err := json.Unmarshal(resp.Body, &addLnResp)
 		if err != nil {
-			ln.Config.Log("There was an error unmarshalling the response from internal route: ", msg.Target, msg.Method, err.Error())
+			ln.Log("There was an error unmarshalling the response from internal route: ", msg.Target, msg.Method, err.Error())
 			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte("Error unmarshalling AddLinodeHandler response: "+err.Error()))
 		}
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, resp.Body)

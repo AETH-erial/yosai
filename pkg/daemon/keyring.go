@@ -153,8 +153,10 @@ func (s SshKey) GetType() string {
 }
 
 type ApiKeyRing struct {
-	Rungs []DaemonKeyRing
-	Keys  map[string]Key // hashmap with the keys in the keyring. Protected with getters and setters
+	Rungs     []DaemonKeyRing
+	Keys      map[string]Key // hashmap with the keys in the keyring. Protected with getters and setters
+	Config    *ConfigFromFile
+	KeyTagger keytags.Keytagger
 }
 
 /*
@@ -173,18 +175,23 @@ func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 			key, err := a.Rungs[i].GetKey(name)
 			if err != nil {
 				if errors.Is(err, KeyNotFound) {
+					a.Log("Key: ", name, "not found.", err.Error())
 					continue
 				}
 				if errors.Is(err, KeyRingError) {
+					a.Log("Error getting key:", name, err.Error())
 					return key, err
 				}
+				a.Log("Unhandled exception getting key: ", name, err.Error())
 				log.Fatal("Ungraceful shutdown. unhandled error within keyring: ", err)
 
 			}
 
 			if key.GetPublic() == "" || key.GetSecret() == "" {
+				a.Log("null key: ", name, "returned.")
 				continue
 			}
+			a.Log("Key:", name, "successfully added to the daemon keyring.")
 			a.AddKey(name, key)
 			return key, nil
 
@@ -231,12 +238,22 @@ func (a *ApiKeyRing) Source() string {
 Create a new daemon keyring. Passing additional implementers of the DaemonKeyRing will
 allow the GetKey() method on the toplevel keyring to search all subsequent keyrings for a match.
 */
-func NewKeyRing() *ApiKeyRing {
+func NewKeyRing(cfg *ConfigFromFile, keytagger keytags.Keytagger) *ApiKeyRing {
 	return &ApiKeyRing{
-		Keys:  map[string]Key{},
-		Rungs: []DaemonKeyRing{},
+		Keys:      map[string]Key{},
+		Rungs:     []DaemonKeyRing{},
+		Config:    cfg,
+		KeyTagger: keytagger,
 	}
 
+}
+
+func (a *ApiKeyRing) Log(msg ...string) {
+	keyMsg := []string{
+		"ApiKeyRing:",
+	}
+	keyMsg = append(keyMsg, msg...)
+	a.Config.Log(keyMsg...)
 }
 
 type KeyringRequest struct {
@@ -274,9 +291,31 @@ func (a *ApiKeyRing) KeyringRouter(msg SockMessage) SockMessage {
 			b, _ := json.Marshal(key)
 			return *NewSockMessage(MsgResponse, REQUEST_OK, b)
 		}
+	case "reload":
+		protectedKeys := a.KeyTagger.ProtectedKeys()
+		keynames := []string{}
+		for keyname := range a.Keys {
+			_, ok := protectedKeys[keyname]
+			if ok {
+				continue
+			}
+			keynames = append(keynames, keyname)
+		}
+		for i := range keynames {
+			delete(a.Keys, keynames[i])
+		}
+		a.Log("Keyring depleted, keys in keyring: ", fmt.Sprint(len(a.Keys)))
+		a.Log("Keys to retrieve: ", fmt.Sprint(keynames))
+		for i := range keynames {
+			_, err := a.GetKey(keynames[i])
+			if err != nil {
+				a.Log("Keyring reload error, Error getting key: ", keynames[i], err.Error())
+			}
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully reloaded."))
 
 	case "bootstrap":
-		err := a.Bootstrap(keytags.ConstKeytag{})
+		err := a.Bootstrap()
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
@@ -290,8 +329,8 @@ func (a *ApiKeyRing) KeyringRouter(msg SockMessage) SockMessage {
 /*
 Bootstrap the keyring
 */
-func (a *ApiKeyRing) Bootstrap(keytagger keytags.Keytagger) error {
-	allkeytags := keytagger.AllKeys()
+func (a *ApiKeyRing) Bootstrap() error {
+	allkeytags := a.KeyTagger.AllKeys()
 	for i := range allkeytags {
 		kn := allkeytags[i]
 		_, err := a.GetKey(kn)

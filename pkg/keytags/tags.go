@@ -1,18 +1,19 @@
 package keytags
 
 type Keytagger interface {
-	HashicorpVaultKeyname() string  // returns the API/Vault key's name
-	LinodeApiKeyname() string       // Returns the Linode API key's name
-	VpsRootKeyname() string         // Returns the VPS Root user credentials name
-	VpsSvcAccKeyname() string       // Returns the VPS service account credentials name
-	VpsSvcAccSshKeyname() string    // returns the VPS service account's SSH key name
-	VpsSvcAccSshPubkeySeed() string // Returns the key pair to populate the VPS ssh config with, i.e. the username and pubkey
-	SemaphoreApiKeyname() string    // Returns the Semaphore API key name
-	GitSshKeyname() string          // Returns the name of the SSH key used to pull from the git server
-	WgServerKeypairKeyname() string // returns the keyname of the Wireguard server keypair
-	WgClientKeypairKeyname() string // returns the keyname of the wireguard client keypair
-	AllKeys() []string              // Returns all of the key names
-	GetAnsibleKeys() []string       // Returns all the keynames that need to be added to Semaphore
+	HashicorpVaultKeyname() string    // returns the API/Vault key's name
+	LinodeApiKeyname() string         // Returns the Linode API key's name
+	VpsRootKeyname() string           // Returns the VPS Root user credentials name
+	VpsSvcAccKeyname() string         // Returns the VPS service account credentials name
+	VpsSvcAccSshKeyname() string      // returns the VPS service account's SSH key name
+	VpsSvcAccSshPubkeySeed() string   // Returns the key pair to populate the VPS ssh config with, i.e. the username and pubkey
+	SemaphoreApiKeyname() string      // Returns the Semaphore API key name
+	GitSshKeyname() string            // Returns the name of the SSH key used to pull from the git server
+	WgServerKeypairKeyname() string   // returns the keyname of the Wireguard server keypair
+	WgClientKeypairKeyname() string   // returns the keyname of the wireguard client keypair
+	AllKeys() []string                // Returns all of the key names
+	GetAnsibleKeys() []string         // Returns all the keynames that need to be added to Semaphore
+	ProtectedKeys() map[string]string // Get protected keys that shall not be deleted and reloaded when the keyring is synced with the backend
 }
 
 type ConstKeytag struct {
@@ -47,6 +48,11 @@ func (c ConstKeytag) AllKeys() []string {
 		c.SemaphoreApiKeyname(),
 		c.GitSshKeyname(),
 		c.WgClientKeypairKeyname(),
+	}
+}
+func (c ConstKeytag) ProtectedKeys() map[string]string {
+	return map[string]string{
+		c.HashicorpVaultKeyname(): "",
 	}
 }
 

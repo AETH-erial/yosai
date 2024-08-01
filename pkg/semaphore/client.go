@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -320,20 +321,26 @@ Create a new semaphore client
 		:param log: an io.Writer to write logfile to
 		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.DaemonKeyRing, conf *daemon.ConfigFromFile, keytagger keytags.Keytagger) SemaphoreConnection {
-	log.Write([]byte("Using HTTP mode: " + proto + "\n"))
+func NewSemaphoreClient(url string, proto string, keyring daemon.DaemonKeyRing, conf *daemon.ConfigFromFile, keytagger keytags.Keytagger) SemaphoreConnection {
 	client := &http.Client{}
-	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring, KeyTagger: keytagger}
-
+	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring, KeyTagger: keytagger, Config: conf}
+	semaphoreBootstrap.Log("Using mode ", proto)
 	id, err := semaphoreBootstrap.GetProjectByName(YosaiProject)
 	if err != nil {
-		log.Write([]byte(YosaiProject + " NOT FOUND IN SEMAPHORE. Creating..."))
+		semaphoreBootstrap.Log(YosaiProject, "Not found in semaphore. Creating...")
 		err = semaphoreBootstrap.NewProject(YosaiProject)
 		if err != nil {
-			log.Write([]byte("FATAL ERROR CREATING PROJECT. ABANDONING SHIP. Error: " + err.Error()))
+			semaphoreBootstrap.Log("Fatal error creating the project in semaphore: ", err.Error(), "exiting.")
+			os.Exit(127)
+
 		}
-		id, _ = semaphoreBootstrap.GetProjectByName(YosaiProject)
-		log.Write([]byte("Found " + YosaiProject + " with project id: " + fmt.Sprint(id)))
+		id, err := semaphoreBootstrap.GetProjectByName(YosaiProject)
+		if err != nil {
+			semaphoreBootstrap.Log("Error finding the project: ", YosaiProject, err.Error(), "exiting.")
+			os.Exit(127)
+		}
+		semaphoreBootstrap.Log(YosaiProject, "found with ID: ", fmt.Sprint(id))
+		semaphoreBootstrap.Log("OK! Semaphore connection established.")
 		return SemaphoreConnection{
 			Client:    client,
 			ServerUrl: url,
@@ -344,6 +351,7 @@ func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.
 			KeyTagger: keytagger,
 		}
 	}
+	semaphoreBootstrap.Log("OK! Semaphore connection established.")
 
 	return SemaphoreConnection{
 		Client:    &http.Client{},
@@ -354,6 +362,15 @@ func NewSemaphoreClient(url string, proto string, log io.Writer, keyring daemon.
 		Config:    conf,
 		KeyTagger: keytagger,
 	}
+}
+
+// logging wrapper
+func (s *SemaphoreConnection) Log(msg ...string) {
+	semMsg := []string{
+		"SemaphoreConnection:",
+	}
+	semMsg = append(semMsg, msg...)
+	s.Config.Log(semMsg...)
 }
 
 /*
@@ -640,9 +657,9 @@ func (s SemaphoreConnection) PollTask(taskId int, max_tries int) error {
 	var attempts int
 	for {
 		attempts = attempts + 1
-		s.Config.Log("Polling task: ", fmt.Sprint(taskId), " for ", fmt.Sprint(attempts), " times.")
+		s.Log("Polling task: ", fmt.Sprint(taskId), " for ", fmt.Sprint(attempts), " times.")
 		if attempts > max_tries {
-			s.Config.Log("Polling for job completion timed out after: ", fmt.Sprint(attempts), " attempts.")
+			s.Log("Polling for job completion timed out after: ", fmt.Sprint(attempts), " attempts.")
 
 			return &SemaphoreTimeout{Tries: attempts}
 		}
@@ -650,7 +667,7 @@ func (s SemaphoreConnection) PollTask(taskId int, max_tries int) error {
 		if err != nil {
 			return err
 		}
-		s.Config.Log("Job: ", fmt.Sprint(taskId), " is marked with status: ", resp.Status)
+		s.Log("Job: ", fmt.Sprint(taskId), " is marked with status: ", resp.Status)
 		if resp.Status == "success" {
 			return nil
 		}
