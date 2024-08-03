@@ -194,10 +194,15 @@ func (c *ConfigFromFile) ConfigRouter(msg SockMessage) SockMessage {
 }
 
 type ConfigFromFile struct {
-	stream  io.Writer
-	Cloud   cloudConfig   `json:"cloud"`
-	Ansible ansibleConfig `json:"ansible"`
-	Service serviceConfig `json:"service"`
+	stream   io.Writer
+	Cloud    cloudConfig   `json:"cloud"`
+	Ansible  ansibleConfig `json:"ansible"`
+	Service  serviceConfig `json:"service"`
+	HostInfo hostInfo      `json:"host_info"`
+}
+
+type hostInfo struct {
+	WireguardSavePath string `json:"wireguard_save_path"`
 }
 
 type ansibleConfig struct {

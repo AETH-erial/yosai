@@ -2,7 +2,8 @@ package daemon
 
 import (
 	"encoding/json"
-	"fmt"
+	"os"
+	"path"
 
 	wg "git.aetherial.dev/aeth/yosai/pkg/wireguard/centos"
 )
@@ -28,8 +29,9 @@ type AddHostRequest struct {
 }
 
 type ConfigRenderRequest struct {
-	Client string `json:"client"`
-	Server string `json:"server"`
+	Client       string `json:"client"`
+	Server       string `json:"server"`
+	OutputToFile bool   `json:"output_to_file"`
 }
 
 // Client for building internal Daemon route requests
@@ -61,10 +63,16 @@ func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
 		server, err := c.Config.GetServer(req.Server)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
 		client, err := c.Config.GetClient(req.Client)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
 		seed := wg.WireguardTemplateSeed{
 			VpnClientPrivateKey: clientKeypair.GetSecret(),
-			VpnClientAddress:    client.VpnIpv4.String() + "/" + fmt.Sprint(c.Config.Service.VpnMask),
+			VpnClientAddress:    client.VpnIpv4.String() + "/32",
 			Peers: []wg.WireguardTemplatePeer{
 				wg.WireguardTemplatePeer{
 					Pubkey:  serverKeypair.GetPublic(),
@@ -75,8 +83,16 @@ func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
 		cfg, err := wg.RenderClientConfiguration(seed)
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-
 		}
+		if req.OutputToFile == true {
+			fpath := path.Join(c.Config.HostInfo.WireguardSavePath, server.Name+".conf")
+			err = os.WriteFile(fpath, cfg, 0666)
+			if err != nil {
+				return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+			}
+			return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved to: "+fpath))
+		}
+
 		return *NewSockMessage(MsgResponse, REQUEST_OK, cfg)
 	default:
 		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved Method"))
