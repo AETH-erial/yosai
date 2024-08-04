@@ -119,6 +119,13 @@ func main() {
 		}
 	case "daemon":
 		switch args[1] {
+		case "wg-up":
+			resp, err := dClient.BringUpIntf(args[2])
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(string(resp.Body))
+			os.Exit(0)
 		case "init":
 			err := dClient.ServiceInit(PRIMARY_SERVER)
 			if err != nil {
@@ -195,10 +202,11 @@ func main() {
 					rb.Write([]byte(err.Error()))
 				}
 				// Bring up the new interface here
-				err = dClient.BringUpIntf(newServerName)
+				resp, err = dClient.BringUpIntf(newServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
 				}
+				rb.Write(resp.Body)
 				// Run tests here
 				resp, err = dClient.HealthCheck()
 				if err != nil {

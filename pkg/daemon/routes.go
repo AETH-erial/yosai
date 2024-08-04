@@ -24,6 +24,10 @@ type AddServerResponse struct {
 	Status  string   `json:"status"`
 }
 
+type StartWireguardRequest struct {
+	InterfaceName string `json:"interface_name"`
+}
+
 type AddHostRequest struct {
 	Target string `json:"target"`
 }
@@ -48,6 +52,18 @@ Route handler for all of the exposed functions that the daemon allows for
 */
 func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
 	switch msg.Method {
+	case "wg-up":
+		var req StartWireguardRequest
+		err := json.Unmarshal(msg.Body, &req)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		out, err := wg.StartWgInterface(path.Join(c.Config.HostInfo.WireguardSavePath, req.InterfaceName+".conf"))
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, out)
+
 	case "render-config":
 		var req ConfigRenderRequest
 		err := json.Unmarshal(msg.Body, &req)

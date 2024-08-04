@@ -335,8 +335,13 @@ func (d DaemonClient) BringDownIntf(name string) error {
 	return nil
 }
 
-func (d DaemonClient) BringUpIntf(name string) error {
-	return nil
+func (d DaemonClient) BringUpIntf(name string) (daemon.SockMessage, error) {
+	b, _ := json.Marshal(daemon.StartWireguardRequest{InterfaceName: name})
+	resp := d.Call(b, "daemon", "wg-up")
+	if resp.StatusCode != daemon.REQUEST_OK {
+		return resp, &DaemonClientError{SockMsg: resp}
+	}
+	return resp, nil
 
 }
 
