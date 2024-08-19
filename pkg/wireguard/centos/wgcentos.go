@@ -59,8 +59,8 @@ func RenderClientConfiguration(wgData WireguardTemplateSeed) ([]byte, error) {
 /*
 Start a wireguard interface
 */
-func StartWgInterface(intfName string) ([]byte, error) {
-	wgCmd := exec.Command("wg-quick", "up", intfName)
+func ChangeWgInterfaceState(intfName string, state string) ([]byte, error) {
+	wgCmd := exec.Command("wg-quick", state, intfName)
 	return wgCmd.Output()
 	/*
 	   var foreground bool

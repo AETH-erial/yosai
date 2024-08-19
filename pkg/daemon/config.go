@@ -18,9 +18,7 @@ import (
 const LogMsgTmpl = "YOSAI Daemon ||| time: %s ||| %s\n"
 
 var EnvironmentVariables = []string{
-	"HASHICORP_VAULT_URL",
 	"HASHICORP_VAULT_KEY",
-	"SEMAPHORE_SERVER_URL",
 }
 
 const DefaultConfigLoc = "./.config.json"
@@ -220,6 +218,8 @@ type serviceConfig struct {
 	VpnServerPort     int             `json:"vpn_server_port"`
 	SecretsBackend    string          `json:"secrets_backend"`
 	SecretsBackendUrl string          `json:"secrets_backend_url"`
+	AnsibleBackend    string          `json:"ansible_backend"`
+	AnsibleBackendUrl string          `json:"ansible_backend_url"`
 }
 
 func (c *ConfigFromFile) GetServer(name string) (VpnServer, error) {
@@ -272,6 +272,7 @@ type VpnClient struct {
 	Name    string `json:"name"`
 	VpnIpv4 net.IP
 	Pubkey  string `json:"pubkey"`
+	Default bool   `json:"default"`
 }
 
 type VpnServer struct {
@@ -309,6 +310,18 @@ func (c *ConfigFromFile) VpnClients() []VpnClient {
 		clients = append(clients, val)
 	}
 	return clients
+}
+
+/*
+Get the default VPN client
+*/
+func (c *ConfigFromFile) DefaultClient() (VpnClient, error) {
+	for name := range c.Service.Clients {
+		if c.Service.Clients[name].Default {
+			return c.Service.Clients[name], nil
+		}
+	}
+	return VpnClient{}, &ConfigError{Msg: "No default client was specified!"}
 }
 
 /*
@@ -492,6 +505,14 @@ func BlankConfig(path string) error {
 	os.WriteFile(path, b, 0666)
 	return nil
 
+}
+
+type ConfigError struct {
+	Msg string
+}
+
+func (c *ConfigError) Error() string {
+	return "There was an error with the configuration: " + c.Msg
 }
 
 /*

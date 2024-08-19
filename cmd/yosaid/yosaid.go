@@ -49,7 +49,7 @@ func main() {
 		Secret: os.Getenv(keytags.HASHICORP_VAULT_KEYNAME),
 	})
 	hashiConn := hashicorp.VaultConnection{
-		VaultUrl:  os.Getenv("HASHICORP_VAULT_URL"),
+		VaultUrl:  conf.Service.SecretsBackendUrl,
 		HttpProto: "https",
 		KeyRing:   apikeyring,
 		Client:    &http.Client{},
@@ -63,7 +63,7 @@ func main() {
 	// creating the connection client with Hashicorp vault, and using the keyring we created above
 	// as this clients keyring. This allows the API key we added earlier to be used when calling the API
 	lnConn := linode.LinodeConnection{Client: &http.Client{}, Keyring: apikeyring, Config: conf, KeyTagger: keytags.ConstKeytag{}}
-	semaphoreConn := semaphore.NewSemaphoreClient(os.Getenv("SEMAPHORE_SERVER_URL"), "https", apikeyring, conf, keytags.ConstKeytag{})
+	semaphoreConn := semaphore.NewSemaphoreClient(conf.Service.AnsibleBackendUrl, "https", apikeyring, conf, keytags.ConstKeytag{})
 	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 
 	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf)

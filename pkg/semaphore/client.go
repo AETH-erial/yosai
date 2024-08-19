@@ -1216,7 +1216,7 @@ func (s SemaphoreConnection) TaskHandler(msg daemon.SockMessage) daemon.SockMess
 		if err != nil {
 			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
 		}
-		err = s.PollTask(taskId, 30)
+		err = s.PollTask(taskId, 60)
 		if err != nil {
 			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
 		}

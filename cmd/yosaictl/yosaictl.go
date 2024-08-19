@@ -17,7 +17,6 @@ const PRIMARY_SERVER = "primary-vpn"
 const SECONDARY_SERVER = "secondary-vpn"
 
 func main() {
-
 	var args []string
 	args = os.Args[1:]
 	dClient := dclient.DaemonClient{SockPath: dclient.UNIX_DOMAIN_SOCK_PATH}
@@ -96,9 +95,11 @@ func main() {
 		case "server":
 			switch args[2] {
 			case "add":
-				b, _ := json.Marshal(daemon.VpnServer{Name: args[3]})
-				resp := dClient.Call(b, "config-server", "add")
-				rb.Write(resp.Body)
+				err := dClient.AddServeToConfig(args[3])
+				if err != nil {
+					rb.Write([]byte(err.Error()))
+				}
+				rb.Write([]byte("Server added."))
 			case "delete":
 				b, _ := json.Marshal(daemon.VpnServer{Name: args[3]})
 				resp := dClient.Call(b, "config-server", "delete")
@@ -114,6 +115,13 @@ func main() {
 				b, _ := json.Marshal(daemon.VpnClient{Name: args[3]})
 				resp := dClient.Call(b, "config-peer", "add")
 				rb.Write(resp.Body)
+			}
+		case "reload":
+			err := dClient.ForceReload()
+			if err != nil {
+				rb.Write([]byte(err.Error()))
+			} else {
+				rb.Write([]byte("configuration reloaded."))
 			}
 
 		}
@@ -155,8 +163,17 @@ func main() {
 				*/
 				var oldServerName string
 				var newServerName string
+				var defaultClient string
 				for name := range cfg.Service.Servers {
 					oldServerName = name
+				}
+				for name := range cfg.Service.Clients {
+					if cfg.Service.Clients[name].Default {
+						defaultClient = cfg.Service.Clients[name].Name
+					}
+				}
+				if defaultClient == "" {
+					log.Fatal("No default client found. Please address this via the config file, and then run 'yosaictl config reload'")
 				}
 				switch oldServerName {
 				case "":
@@ -172,59 +189,79 @@ func main() {
 				err := dClient.RemoveServerFromAnsible(oldServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
 
 				err = dClient.NewServer(newServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
-				resp, err := dClient.ConfigureServers()
+				resp, err := dClient.PollServer(newServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
+				}
+				rb.Write(resp.Body)
+
+				resp, err = dClient.ConfigureServers()
+				if err != nil {
+					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
 				rb.Write(resp.Body)
 				resp = dClient.Call([]byte(dclient.BLANK_JSON), "keyring", "reload")
 				if resp.StatusCode != daemon.REQUEST_OK {
 					rb.Write([]byte("Error reloading the keyring."))
+					os.Exit(1)
 				}
-				resp = dClient.RenderWgConfig("save")
+				resp = dClient.RenderWgConfig(fmt.Sprintf("server=%s,client=%s,outmode=save", newServerName, defaultClient))
 				if resp.StatusCode != daemon.REQUEST_OK {
 					rb.Write([]byte("Error rendering and saving the config."))
+					os.Exit(1)
 				}
 				// firewall changes, when we get there
 				err = dClient.LockFirewall()
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
 				// Bring down the interface here
-				err = dClient.BringDownIntf(oldServerName)
+				resp, err = dClient.BringDownIntf(oldServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
+				rb.Write(resp.Body)
 				// Bring up the new interface here
 				resp, err = dClient.BringUpIntf(newServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
 				rb.Write(resp.Body)
 				// Run tests here
 				resp, err = dClient.HealthCheck()
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
 				// destroy interface
 				err = dClient.DestroyIntf(oldServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
 				// Destroy old server here
 				err = dClient.DestroyServer(oldServerName)
 				if err != nil {
 					rb.Write([]byte(err.Error()))
+					os.Exit(1)
 				}
 				// happy panda here
 
 			default:
+				rb.Write([]byte("Both primary and secondary VPN servers were found active. Manual intervention needed."))
 				/*
 					Handling this behaviour might be odd, we will need to have some utilities that allow an operator
 					to save/manipulate their configuration/system. This could be that there are two servers that still exist,
@@ -235,44 +272,16 @@ func main() {
 				*/
 			}
 
-			_, ok := cfg.Service.Servers[PRIMARY_SERVER]
-			if !ok {
-				err := dClient.NewServer(PRIMARY_SERVER)
-				resp, err := dClient.PollServer(PRIMARY_SERVER)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(int(resp.StatusCode))
-				}
-				rb.Write(resp.Body)
-
-				resp, err = dClient.ConfigureServers()
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(int(resp.StatusCode))
-				}
-				rb.Write(resp.Body)
-				os.Exit(0)
-			}
-			_, ok = cfg.Service.Servers[SECONDARY_SERVER]
-			if !ok {
-				dClient.NewServer(SECONDARY_SERVER)
-				dClient.PollServer(SECONDARY_SERVER)
-				dClient.ConfigureServers()
-				os.Exit(0)
-			}
 		case "render-wg":
 			resp := dClient.RenderWgConfig(args[2])
 			rb.Write(resp.Body)
 		}
 	}
-
-	var outbuf = bytes.NewBuffer([]byte{})
-
-	err := json.Indent(outbuf, rb.Bytes(), " ", "    ")
+	out := bytes.NewBuffer([]byte{})
+	err := json.Indent(out, rb.Bytes(), "", "    ")
 	if err != nil {
 		fmt.Println(string(rb.Bytes()))
 		os.Exit(0)
 	}
-	fmt.Println(string(outbuf.Bytes()))
-
+	fmt.Println(string(out.Bytes()))
 }

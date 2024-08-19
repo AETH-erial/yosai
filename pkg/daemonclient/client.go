@@ -29,7 +29,7 @@ Gets the configuration from the upstream daemon/server
 */
 func (d DaemonClient) GetConfig() daemon.ConfigFromFile {
 
-	resp := d.Call([]byte("{\"data\":\"test\"}"), "config", "show")
+	resp := d.Call([]byte(BLANK_JSON), "config", "show")
 	var cfg daemon.ConfigFromFile
 	err := json.Unmarshal(resp.Body, &cfg)
 	if err != nil {
@@ -241,6 +241,18 @@ func (d DaemonClient) GetServer(val string) (daemon.VpnServer, error) {
 }
 
 /*
+Add a server to the configuration
+*/
+func (d DaemonClient) AddServeToConfig(val string) error {
+	argMap := makeArgMap(val)
+	resp := d.Call(serverAddRequestBuilder(argMap), "config-server", "add")
+	if resp.StatusCode != daemon.REQUEST_OK {
+		return &DaemonClientError{SockMsg: resp}
+	}
+	return nil
+}
+
+/*
 Trigger the daemon to execute the vpn rotation playbook on all of the servers in the ansible inventory
 */
 func (d DaemonClient) ConfigureServers() (daemon.SockMessage, error) {
@@ -331,8 +343,13 @@ func (d DaemonClient) DestroyServer(name string) error {
 
 }
 
-func (d DaemonClient) BringDownIntf(name string) error {
-	return nil
+func (d DaemonClient) BringDownIntf(name string) (daemon.SockMessage, error) {
+	b, _ := json.Marshal(daemon.StartWireguardRequest{InterfaceName: name})
+	resp := d.Call(b, "daemon", "wg-down")
+	if resp.StatusCode != daemon.REQUEST_OK {
+		return resp, &DaemonClientError{SockMsg: resp}
+	}
+	return resp, nil
 }
 
 func (d DaemonClient) BringUpIntf(name string) (daemon.SockMessage, error) {
@@ -402,6 +419,17 @@ func (d DaemonClient) addLinode(name string) (string, error) {
 
 func (d DaemonClient) BootstrapAll() error {
 	resp := d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, "all"), "ansible", "bootstrap")
+	if resp.StatusCode != daemon.REQUEST_OK {
+		return &DaemonClientError{SockMsg: resp}
+	}
+	return nil
+}
+
+/*
+Force the daemon to reload its configuration
+*/
+func (d DaemonClient) ForceReload() error {
+	resp := d.Call([]byte(BLANK_JSON), "config", "reload")
 	if resp.StatusCode != daemon.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}

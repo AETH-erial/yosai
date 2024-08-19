@@ -20,16 +20,14 @@ const LinodeApiVers = "v4"
 const LinodeRegions = "regions"
 const LinodeTypes = "linode/types"
 
+const (
+	DEFAULT_TYPE   = "g6-nanode-1"
+	DEFAULT_IMAGE  = "linode/debian11"
+	DEFAULT_REGION = "us-southeast"
+)
+
 type GetAllLinodes struct {
 	Data []GetLinodeResponse `json:"data"`
-}
-
-func (g GetAllLinodes) GetResult() string {
-	resp, err := json.MarshalIndent(&g, " ", "    ")
-	if err != nil {
-		return "Sorry, couldnt parse the json." + err.Error()
-	}
-	return string(resp)
 }
 
 type GetLinodeResponse struct {
@@ -480,7 +478,7 @@ func (ln LinodeConnection) PollLinodeHandler(msg daemon.SockMessage) daemon.Sock
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
 	}
 
-	err = ln.ServerPoll(req.Address, 15)
+	err = ln.ServerPoll(req.Address, 60)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
 	}

@@ -9,8 +9,7 @@ type Keytagger interface {
 	VpsSvcAccSshPubkeySeed() string   // Returns the key pair to populate the VPS ssh config with, i.e. the username and pubkey
 	SemaphoreApiKeyname() string      // Returns the Semaphore API key name
 	GitSshKeyname() string            // Returns the name of the SSH key used to pull from the git server
-	WgServerKeypairKeyname() string   // returns the keyname of the Wireguard server keypair
-	WgClientKeypairKeyname() string   // returns the keyname of the wireguard client keypair
+	WgKeypairKeyname() string         // returns the keyname of the Wireguard server keypair
 	AllKeys() []string                // Returns all of the key names
 	GetAnsibleKeys() []string         // Returns all the keynames that need to be added to Semaphore
 	ProtectedKeys() map[string]string // Get protected keys that shall not be deleted and reloaded when the keyring is synced with the backend
@@ -27,8 +26,7 @@ func (c ConstKeytag) VpsSvcAccSshKeyname() string    { return VPS_SSH_KEY_KEYNAM
 func (c ConstKeytag) SemaphoreApiKeyname() string    { return SEMAPHORE_API_KEYNAME }
 func (c ConstKeytag) GitSshKeyname() string          { return GIT_SSH_KEYNAME }
 func (c ConstKeytag) VpsSvcAccSshPubkeySeed() string { return VPS_PUBKEY_SEED_KEYNAME }
-func (c ConstKeytag) WgClientKeypairKeyname() string { return WG_CLIENT_KEYPAIR_KEYNAME }
-func (c ConstKeytag) WgServerKeypairKeyname() string { return WG_SERVER_KEYPAIR_KEYNAME }
+func (c ConstKeytag) WgKeypairKeyname() string       { return WG_KEYPAIR_KEYNAME }
 func (c ConstKeytag) GetAnsibleKeys() []string {
 	return []string{
 		GIT_SSH_KEYNAME,
@@ -47,7 +45,7 @@ func (c ConstKeytag) AllKeys() []string {
 		c.VpsSvcAccSshKeyname(),
 		c.SemaphoreApiKeyname(),
 		c.GitSshKeyname(),
-		c.WgClientKeypairKeyname(),
+		//		c.WgKeypairKeyname(),
 	}
 }
 func (c ConstKeytag) ProtectedKeys() map[string]string {
@@ -101,5 +99,4 @@ const VPS_SSH_KEY_KEYNAME = "VPS_SSH_KEY"
 const SEMAPHORE_API_KEYNAME = "SEMAPHORE_API_KEY"
 const GIT_SSH_KEYNAME = "GIT_SSH_KEY"
 const VPS_PUBKEY_SEED_KEYNAME = "VPS_PUBKEY_SEED"
-const WG_CLIENT_KEYPAIR_KEYNAME = "WG_CLIENT_KEYPAIR"
-const WG_SERVER_KEYPAIR_KEYNAME = "WG_SERVER_KEYPAIR"
+const WG_KEYPAIR_KEYNAME = "WG_KEYPAIR"

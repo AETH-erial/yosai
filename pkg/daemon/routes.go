@@ -58,7 +58,18 @@ func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
-		out, err := wg.StartWgInterface(path.Join(c.Config.HostInfo.WireguardSavePath, req.InterfaceName+".conf"))
+		out, err := wg.ChangeWgInterfaceState(path.Join(c.Config.HostInfo.WireguardSavePath, req.InterfaceName+".conf"), "up")
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, out)
+	case "wg-down":
+		var req StartWireguardRequest
+		err := json.Unmarshal(msg.Body, &req)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		out, err := wg.ChangeWgInterfaceState(path.Join(c.Config.HostInfo.WireguardSavePath, req.InterfaceName+".conf"), "down")
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
@@ -70,11 +81,11 @@ func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
-		serverKeypair, err := c.keyring.GetKey(req.Server + "_" + c.Keytags.WgServerKeypairKeyname())
+		serverKeypair, err := c.keyring.GetKey(req.Server + "_" + c.Keytags.WgKeypairKeyname())
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
-		clientKeypair, err := c.keyring.GetKey(req.Client + "_" + c.Keytags.WgClientKeypairKeyname())
+		clientKeypair, err := c.keyring.GetKey(req.Client + "_" + c.Keytags.WgKeypairKeyname())
 		if err != nil {
 			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 		}
