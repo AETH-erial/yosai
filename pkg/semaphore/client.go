@@ -58,6 +58,7 @@ type NewTemplateRequest struct {
 	RepositoryId  int    `json:"repository_id"`
 	EnvironmentId int    `json:"environment_id"`
 	Playbook      string `json:"playbook"`
+	App           string `json:"app"`
 	Type          string `json:"type"`
 }
 
@@ -68,6 +69,7 @@ type JobTemplate struct {
 	InventoryId   int    `json:"inventory_id"`
 	RepositoryId  int    `json:"repository_id"`
 	EnvironmentId int    `json:"environment_id"`
+	App           string `json:"app"`
 	Playbook      string `json:"playbook"`
 }
 
@@ -698,10 +700,16 @@ func (s SemaphoreConnection) AddInventory(name string) error {
 	if err != nil {
 		return &SemaphoreClientError{Msg: err.Error()}
 	}
+	inv := YamlInventory{All: yamlInvAll{Hosts: map[string]yamlVars{}}}
+	b, err := yaml.Marshal(inv)
+	if err != nil {
+		s.Config.Log("failed to generate yaml inv stub, using default fallback values. Error: ", err.Error())
+		b = []byte("all:\n  hosts: {}\n")
+	}
 	body := NewInventoryRequest{
 		Name:        name,
 		ProjectId:   s.ProjectId,
-		Inventory:   string([]byte("all:\n")),
+		Inventory:   string(b),
 		SshKeyId:    sshKeyId,
 		BecomeKeyId: becomeKeyId,
 		Type:        "static-yaml",
@@ -945,6 +953,7 @@ func (s SemaphoreConnection) AddJobTemplate(playbook string, repoName string) er
 		RepositoryId:  repoId,
 		EnvironmentId: envId,
 		Playbook:      playbook,
+		App:           "ansible",
 		Type:          "",
 	}
 	b, err := json.Marshal(templ)
@@ -1067,24 +1076,30 @@ func (s SemaphoreConnection) keyBootstrapper() daemon.SockMessage {
 Wrapping the functionality of the Project bootstrapper for top level cleanliness
 */
 func (s SemaphoreConnection) projectBootstrapper() daemon.SockMessage {
+	s.Config.Log("Entered Semaphore bootstrapping ...")
 	err := s.NewProject(YosaiProject)
 	if err != nil {
+		s.Config.Log("Error creating the project: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddRepository(s.Config.Repo(), s.Config.Branch())
 	if err != nil {
+		s.Config.Log("Error creating the repository: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	hashiKey, err := s.Keyring.GetKey(s.KeyTagger.HashicorpVaultKeyname())
 	if err != nil {
+		s.Config.Log("Error getting the hashicorp keyring from the keyring: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddEnvironment(EnvironmentVariables{SecretsProviderUrl: s.Config.SecretsBackendUrl(), SecretsProviderApiKey: hashiKey.GetSecret()})
 	if err != nil {
+		s.Config.Log("Error creating the environment: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddJobTemplate(s.Config.PlaybookName(), fmt.Sprintf("%s:%s", s.Config.Repo(), s.Config.Branch()))
 	if err != nil {
+		s.Config.Log("Error creating the job template: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
 	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Project successfuly bootstrapped."))
@@ -1104,198 +1119,211 @@ func (s SemaphoreConnection) inventoryBootstrapper() daemon.SockMessage {
 }
 
 func (s SemaphoreConnection) BootstrapHandler(msg daemon.SockMessage) daemon.SockMessage {
+	bootstrapFuncs := []func() daemon.SockMessage{
+		s.keyBootstrapper,
+		s.inventoryBootstrapper,
+		s.projectBootstrapper,
+	}
+	successMsg := ""
+	for i := range bootstrapFuncs {
+		call := bootstrapFuncs[i]
+		resp := call()
+		if resp.StatusCode != daemon.REQUEST_OK {
+			s.Log("Error bootstrapping components: ", resp.Target, string(resp.Body))
+			continue
+		}
+		successMsg = successMsg + resp.StatusMsg + "\n"
+
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte(successMsg))
+
+}
+
+/*
+Wrapping the add project function in a route friendly interface
+
+	:param msg: a message to parse that was recieved from the daemon socket
+*/
+func (s SemaphoreConnection) AddProjectHandler(msg daemon.SockMessage) daemon.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	switch req.Target {
-	case "keys":
-		return s.keyBootstrapper()
-	case "project":
-		return s.projectBootstrapper()
-	case "inventory":
-		return s.inventoryBootstrapper()
-	case "all":
-		bootstrapFuncs := []func() daemon.SockMessage{
-			s.keyBootstrapper,
-			s.inventoryBootstrapper,
-			s.projectBootstrapper,
-		}
-		successMsg := ""
-		for i := range bootstrapFuncs {
-			call := bootstrapFuncs[i]
-			resp := call()
-			if resp.StatusCode != daemon.REQUEST_OK {
-				return resp
-			}
-			successMsg = successMsg + resp.StatusMsg + "\n"
-
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte(successMsg))
-	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
-
+	err = s.NewProject(req.Target)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Project: "+req.Target+" successfully added."))
 }
 
 /*
-Router for handling all stuff relating to Projects
+Wrapping the show project function in a route friendly interface
 
-	:param msg: a daemon.SockMessage with request info
+	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) ProjectHandler(msg daemon.SockMessage) daemon.SockMessage {
-	switch msg.Method {
-	case "add":
-		var req SemaphoreRequest
-		err := json.Unmarshal(msg.Body, &req)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		err = s.NewProject(req.Target)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Project: "+req.Target+" successfully added."))
-	case "show":
-		proj, err := s.GetProjects()
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		b, err := json.MarshalIndent(proj, " ", "    ")
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
-	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
-
+func (s SemaphoreConnection) ShowProjectHandler(msg daemon.SockMessage) daemon.SockMessage {
+	proj, err := s.GetProjects()
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-
+	b, err := json.MarshalIndent(proj, " ", "    ")
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 }
 
 /*
-handler to wrap all functions relating to Tasks
+Wrapping the run task function in a route friendly interface
 
-	:param msg: a daemon.SockMessage that contains the request information
+	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) TaskHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) RunTaskHandler(msg daemon.SockMessage) daemon.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	switch msg.Method {
-	case "run":
-		resp, err := s.StartJob(req.Target)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		b, err := json.MarshalIndent(resp, " ", "    ")
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
-	case "show":
-		taskid, err := strconv.Atoi(req.Target)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		taskout, err := s.GetTaskOutput(taskid)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		b, err := json.MarshalIndent(taskout, " ", "    ")
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
-	case "poll":
-		taskId, err := strconv.Atoi(req.Target)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
-		}
-		err = s.PollTask(taskId, 60)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Task: "+req.Target+" completed."))
-	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
-
+	resp, err := s.StartJob(req.Target)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
+	b, err := json.MarshalIndent(resp, " ", "    ")
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 }
 
 /*
-Handles all of the requests relating to Hosts
+Wrapping the show task function in a route friendly interface
 
-	:param msg: a daemon.SockMessage containing all of the request info
+	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) HostHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) ShowTaskHandler(msg daemon.SockMessage) daemon.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	switch msg.Method {
-	case "add":
-		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
-		vpnHosts := []daemon.VpnServer{}
-		for i := range hosts {
-			server, err := s.Config.GetServer(hosts[i])
-			if err != nil {
-				return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-			}
-			vpnHosts = append(vpnHosts, server)
-		}
-		err := s.AddHostToInv(YosaiServerInventory, vpnHosts...)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v added to the inventory", hosts)))
-
-	case "delete":
-		hosts := strings.Split(strings.Trim(req.Target, ","), ",")
-		err := s.RemoveHostFromInv(YosaiServerInventory, hosts...)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
-	case "show":
-		inv, err := s.GetAllInventories()
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		b, err := json.Marshal(inv)
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
-
-	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
+	taskid, err := strconv.Atoi(req.Target)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
+	taskout, err := s.GetTaskOutput(taskid)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	b, err := json.MarshalIndent(taskout, " ", "    ")
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
 }
 
 /*
-Implementing the router interface
+Wrapping the poll task function in a route friendly interface
 
-	:param msg: a daemon.SockMessage containing the request data
+	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) SemaphoreRouter(msg daemon.SockMessage) daemon.SockMessage {
-	switch msg.Target {
-	case "bootstrap":
-		return s.BootstrapHandler(msg)
-	case "project":
-		return s.ProjectHandler(msg)
-	case "task":
-		return s.TaskHandler(msg)
-	case "hosts":
-		return s.HostHandler(msg)
-	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Method."))
+func (s SemaphoreConnection) PollTaskHandler(msg daemon.SockMessage) daemon.SockMessage {
+	var req SemaphoreRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
+	taskId, err := strconv.Atoi(req.Target)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+	}
+	err = s.PollTask(taskId, 60)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Task: "+req.Target+" completed."))
+}
+
+/*
+Wrapping the show hosts functions in a route friendly interface
+
+	:param msg: a message to parse that was recieved from the daemon socket
+*/
+func (s SemaphoreConnection) ShowHostHandler(msg daemon.SockMessage) daemon.SockMessage {
+
+	inv, err := s.GetAllInventories()
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	b, err := json.Marshal(inv)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+}
+
+/*
+Wrapping the delete host function in a route friendly interface
+
+	:param msg: a message to parse that was recieved from the daemon socket
+*/
+func (s SemaphoreConnection) DeleteHostHandler(msg daemon.SockMessage) daemon.SockMessage {
+
+	var req SemaphoreRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	hosts := strings.Split(strings.Trim(req.Target, ","), ",")
+	err = s.RemoveHostFromInv(YosaiServerInventory, hosts...)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
+}
+
+/*
+Wrapping the add host function in a route friendly interface
+
+	:param msg: a message to parse that was recieved from the daemon socket
+*/
+func (s SemaphoreConnection) AddHostHandler(msg daemon.SockMessage) daemon.SockMessage {
+	var req SemaphoreRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+
+	hosts := strings.Split(strings.Trim(req.Target, ","), ",")
+	vpnHosts := []daemon.VpnServer{}
+	for i := range hosts {
+		server, err := s.Config.GetServer(hosts[i])
+		if err != nil {
+			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		}
+		vpnHosts = append(vpnHosts, server)
+	}
+	err = s.AddHostToInv(YosaiServerInventory, vpnHosts...)
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v added to the inventory", hosts)))
+}
+
+type SemaphoreRouter struct {
+	routes map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage
+}
+
+func (s *SemaphoreRouter) Register(method daemon.Method, callable func(daemon.SockMessage) daemon.SockMessage) {
+	s.routes[method] = callable
+}
+
+func (s *SemaphoreRouter) Routes() map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage {
+	return s.routes
+}
+
+func NewSemaphoreRouter() *SemaphoreRouter {
+	return &SemaphoreRouter{routes: map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage{}}
 }
 
 /*

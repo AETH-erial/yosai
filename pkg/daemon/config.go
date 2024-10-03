@@ -88,107 +88,149 @@ func BlankEnv(path string) error {
 
 }
 
-// Router for all peer related functions
-func (c *ConfigFromFile) PeerRouter(msg SockMessage) SockMessage {
-	switch msg.Method {
-	case "add":
-		var peer VpnClient
-		err := json.Unmarshal(msg.Body, &peer)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		addr, err := c.GetAvailableVpnIpv4()
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+c.AddClient(addr, peer.Pubkey, peer.Name)+" Successfully added."))
-	case "delete":
-		var req VpnClient
-		err := json.Unmarshal(msg.Body, &req)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		peer, err := c.GetClient(req.Name)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
+/*
+Wrapping the add peer functionality in a router friendly interface
 
-		delete(c.Service.Clients, peer.Name)
-		err = c.FreeAddress(peer.VpnIpv4.String())
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+peer.Name+" Successfully deleted from the config."))
-
-	default:
-		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved method: "+msg.Method))
+	:param msg: a message to be parsed from the daemon socket
+*/
+func (c *ConfigFromFile) AddPeerHandler(msg SockMessage) SockMessage {
+	var peer VpnClient
+	err := json.Unmarshal(msg.Body, &peer)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 	}
-
+	addr, err := c.GetAvailableVpnIpv4()
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+c.AddClient(addr, peer.Pubkey, peer.Name)+" Successfully added."))
 }
 
-// Router for all server related functions
-func (c *ConfigFromFile) ServerRouter(msg SockMessage) SockMessage {
+/*
+Wrapping the delete peer functionality in a router friendly interface
+
+	:param msg: a message to be parsed from the daemon socket
+*/
+func (c *ConfigFromFile) DeletePeerHandler(msg SockMessage) SockMessage {
+	var req VpnClient
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	peer, err := c.GetClient(req.Name)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+
+	delete(c.Service.Clients, peer.Name)
+	err = c.FreeAddress(peer.VpnIpv4.String())
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+peer.Name+" Successfully deleted from the config."))
+}
+
+/*
+Wrapping the add server functionality in a router friendly interface
+
+	:param msg: a message to be parsed from the daemon socket
+*/
+func (c *ConfigFromFile) AddServerHandler(msg SockMessage) SockMessage {
 	var req VpnServer
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
 		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 	}
-	switch msg.Method {
-	case "add":
-		addr, err := c.GetAvailableVpnIpv4()
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		name := c.AddServer(addr, req.Name, req.WanIpv4, req.Port)
-		c.Log("address: ", addr.String(), "name:", name)
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+name+" Successfully added."))
-	case "delete":
-		server, err := c.GetServer(req.Name)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-
-		delete(c.Service.Servers, server.Name)
-		err = c.FreeAddress(server.VpnIpv4.String())
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+server.Name+" Successfully deleted from the config."))
-
-	default:
-		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved method: "+msg.Method))
+	addr, err := c.GetAvailableVpnIpv4()
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 	}
-
+	name := c.AddServer(addr, req.Name, req.WanIpv4, req.Port)
+	c.Log("address: ", addr.String(), "name:", name)
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+name+" Successfully added."))
 }
 
-// Implemeting the interface to make this callable via the CLI
-func (c *ConfigFromFile) ConfigRouter(msg SockMessage) SockMessage {
-	switch msg.Method {
-	case "show":
-		b, err := json.MarshalIndent(&c, "", "   ")
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, b)
-	case "save":
-		err := c.Save(DefaultConfigLoc)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved successfully."))
-	case "reload":
-		b, err := os.ReadFile(DefaultConfigLoc)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		err = json.Unmarshal(b, c)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration reloaded successfully."))
-	default:
-		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved Method"))
+/*
+Wrapping the delete server functionality in a router friendly interface
+
+	:param msg: a message to be parsed from the daemon socket
+*/
+func (c *ConfigFromFile) DeleteServerHandler(msg SockMessage) SockMessage {
+	var req VpnServer
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 	}
+	server, err := c.GetServer(req.Name)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+
+	delete(c.Service.Servers, server.Name)
+	err = c.FreeAddress(server.VpnIpv4.String())
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+server.Name+" Successfully deleted from the config."))
+}
+
+/*
+Wrapping the show config functionality in a router friendly interface
+
+	:param msg: a message to be parsed from the daemon socket
+*/
+func (c *ConfigFromFile) ShowConfigHandler(msg SockMessage) SockMessage {
+	b, err := json.MarshalIndent(&c, "", "   ")
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, b)
+}
+
+/*
+Wrapping the save config functionality in a router friendly interface
+
+	:param msg: a message to be parsed from the daemon socket
+*/
+func (c *ConfigFromFile) SaveConfigHandler(msg SockMessage) SockMessage {
+	err := c.Save(DefaultConfigLoc)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved successfully."))
+}
+
+/*
+Wrapping the reload config functionality in a router friendly interface
+
+	:param msg: a message to be parsed from the daemon socket
+*/
+func (c *ConfigFromFile) ReloadConfigHandler(msg SockMessage) SockMessage {
+	b, err := os.ReadFile(DefaultConfigLoc)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	err = json.Unmarshal(b, c)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration reloaded successfully."))
+}
+
+type ConfigRouter struct {
+	routes map[Method]func(SockMessage) SockMessage
+}
+
+func (c *ConfigRouter) Register(method Method, callable func(SockMessage) SockMessage) {
+	c.routes[method] = callable
+}
+
+func (c *ConfigRouter) Routes() map[Method]func(SockMessage) SockMessage {
+	return c.routes
+}
+
+func NewConfigRouter() *ConfigRouter {
+	return &ConfigRouter{routes: map[Method]func(SockMessage) SockMessage{}}
 }
 
 type ConfigFromFile struct {

@@ -264,66 +264,73 @@ type KeyringRequest struct {
 }
 
 /*
-Route handler for all requests for the Keyring component
+Wrapping the show keyring function in a route friendly interface
 
-	:param msg: a SockMessage struct containing the request information
+	:param msg: a message to be decoded from the daemon socket
 */
-func (a *ApiKeyRing) KeyringRouter(msg SockMessage) SockMessage {
-	switch msg.Method {
-	case "show":
-		var req KeyringRequest
-		err := json.Unmarshal(msg.Body, &req)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		switch req.Name {
-		case "all":
-			b, err := json.Marshal(a.Keys)
-			if err != nil {
-				return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-			}
-			return *NewSockMessage(MsgResponse, REQUEST_OK, b)
-		default:
-			key, err := a.GetKey(req.Name)
-			if err != nil {
-				return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-			}
-			b, _ := json.Marshal(key)
-			return *NewSockMessage(MsgResponse, REQUEST_OK, b)
-		}
-	case "reload":
-		protectedKeys := a.KeyTagger.ProtectedKeys()
-		keynames := []string{}
-		for keyname := range a.Keys {
-			_, ok := protectedKeys[keyname]
-			if ok {
-				continue
-			}
-			keynames = append(keynames, keyname)
-		}
-		for i := range keynames {
-			delete(a.Keys, keynames[i])
-		}
-		a.Log("Keyring depleted, keys in keyring: ", fmt.Sprint(len(a.Keys)))
-		a.Log("Keys to retrieve: ", fmt.Sprint(keynames))
-		for i := range keynames {
-			_, err := a.GetKey(keynames[i])
-			if err != nil {
-				a.Log("Keyring reload error, Error getting key: ", keynames[i], err.Error())
-			}
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully reloaded."))
-
-	case "bootstrap":
-		err := a.Bootstrap()
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully bootstrapped."))
-	default:
-		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolvable method"))
+func (a *ApiKeyRing) ShowKeyringHandler(msg SockMessage) SockMessage {
+	var req KeyringRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 	}
+	switch req.Name {
+	case "all":
+		b, err := json.Marshal(a.Keys)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		return *NewSockMessage(MsgResponse, REQUEST_OK, b)
+	default:
+		key, err := a.GetKey(req.Name)
+		if err != nil {
+			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		}
+		b, _ := json.Marshal(key)
+		return *NewSockMessage(MsgResponse, REQUEST_OK, b)
+	}
+}
 
+/*
+Wrapping the reload keyring function in a route friendly interface
+
+	:param msg: a message to be decoded from the daemon socket
+*/
+func (a *ApiKeyRing) ReloadKeyringHandler(msg SockMessage) SockMessage {
+	protectedKeys := a.KeyTagger.ProtectedKeys()
+	keynames := []string{}
+	for keyname := range a.Keys {
+		_, ok := protectedKeys[keyname]
+		if ok {
+			continue
+		}
+		keynames = append(keynames, keyname)
+	}
+	for i := range keynames {
+		delete(a.Keys, keynames[i])
+	}
+	a.Log("Keyring depleted, keys in keyring: ", fmt.Sprint(len(a.Keys)))
+	a.Log("Keys to retrieve: ", fmt.Sprint(keynames))
+	for i := range keynames {
+		_, err := a.GetKey(keynames[i])
+		if err != nil {
+			a.Log("Keyring reload error, Error getting key: ", keynames[i], err.Error())
+		}
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully reloaded."))
+}
+
+/*
+Wrapping the bootstrap keyring function in a route friendly interface
+
+	:param msg: a message to be decoded from the daemon socket
+*/
+func (a *ApiKeyRing) BootstrapKeyringHandler(msg SockMessage) SockMessage {
+	err := a.Bootstrap()
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully bootstrapped."))
 }
 
 /*
@@ -340,6 +347,22 @@ func (a *ApiKeyRing) Bootstrap() error {
 	}
 	return nil
 
+}
+
+type KeyringRouter struct {
+	routes map[Method]func(SockMessage) SockMessage
+}
+
+func (k *KeyringRouter) Register(method Method, callable func(SockMessage) SockMessage) {
+	k.routes[method] = callable
+}
+
+func (k *KeyringRouter) Routes() map[Method]func(SockMessage) SockMessage {
+	return k.routes
+}
+
+func NewKeyRingRouter() *KeyringRouter {
+	return &KeyringRouter{routes: map[Method]func(SockMessage) SockMessage{}}
 }
 
 /*

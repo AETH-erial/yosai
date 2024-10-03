@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -80,6 +79,21 @@ func main() {
 			rb.Write(resp.Body)
 
 		}
+	case "vpn-config":
+		switch args[1] {
+		case "save":
+			resp := dClient.SaveWgConfig(args[2])
+			rb.Write(resp.Body)
+		case "show":
+			resp := dClient.RenderWgConfig(args[2])
+			rb.Write(resp.Body)
+		}
+	case "daemon":
+		switch args[1] {
+		case "show":
+			resp := dClient.ShowAllRoutes()
+			rb.Write(resp.Body)
+		}
 	case "config":
 		switch args[1] {
 		case "show":
@@ -125,157 +139,7 @@ func main() {
 			}
 
 		}
-	case "daemon":
-		switch args[1] {
-		case "wg-up":
-			resp, err := dClient.BringUpIntf(args[2])
-			if err != nil {
-				log.Fatal(err)
-			}
-			fmt.Println(string(resp.Body))
-			os.Exit(0)
-		case "init":
-			err := dClient.ServiceInit(PRIMARY_SERVER)
-			if err != nil {
-				rb.Write([]byte(err.Error()))
-			} else {
-				rb.Write([]byte("Core system init success."))
-			}
-		case "rotate":
-			cfg := dClient.GetConfig()
-			switch len(cfg.Service.Servers) {
-			case 0:
-				// new server, start from new. Or reject and make the operator init
-			case 1:
-				/*
-								standard rotation, flow would look something like:
-								get server name ->
-					            remove server from inventory ->
-								start build for new server, different name ->
-								wait for server to boot + configure itself ->
-								## this is where firewall magic would happen that kills all traffic ##
-								render new configuration for the new server ->
-								bring down old wireguard interface ->
-								bring up new wireguard interface ->
-								run a health check and then a VPN/DNS leak test ->
-								destroy old server from the system ->
-								happy panda ->
-				*/
-				var oldServerName string
-				var newServerName string
-				var defaultClient string
-				for name := range cfg.Service.Servers {
-					oldServerName = name
-				}
-				for name := range cfg.Service.Clients {
-					if cfg.Service.Clients[name].Default {
-						defaultClient = cfg.Service.Clients[name].Name
-					}
-				}
-				if defaultClient == "" {
-					log.Fatal("No default client found. Please address this via the config file, and then run 'yosaictl config reload'")
-				}
-				switch oldServerName {
-				case "":
-					log.Fatal("couldnt capture the name of the old server: ", oldServerName)
-				case PRIMARY_SERVER:
-					newServerName = SECONDARY_SERVER
-				case SECONDARY_SERVER:
-					newServerName = PRIMARY_SERVER
-				}
-				if newServerName == "" {
-					log.Fatal("couldnt capture the name of the new server:", newServerName)
-				}
-				err := dClient.RemoveServerFromAnsible(oldServerName)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
 
-				err = dClient.NewServer(newServerName)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				resp, err := dClient.PollServer(newServerName)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				rb.Write(resp.Body)
-
-				resp, err = dClient.ConfigureServers()
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				rb.Write(resp.Body)
-				resp = dClient.Call([]byte(dclient.BLANK_JSON), "keyring", "reload")
-				if resp.StatusCode != daemon.REQUEST_OK {
-					rb.Write([]byte("Error reloading the keyring."))
-					os.Exit(1)
-				}
-				resp = dClient.RenderWgConfig(fmt.Sprintf("server=%s,client=%s,outmode=save", newServerName, defaultClient))
-				if resp.StatusCode != daemon.REQUEST_OK {
-					rb.Write([]byte("Error rendering and saving the config."))
-					os.Exit(1)
-				}
-				// firewall changes, when we get there
-				err = dClient.LockFirewall()
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				// Bring down the interface here
-				resp, err = dClient.BringDownIntf(oldServerName)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				rb.Write(resp.Body)
-				// Bring up the new interface here
-				resp, err = dClient.BringUpIntf(newServerName)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				rb.Write(resp.Body)
-				// Run tests here
-				resp, err = dClient.HealthCheck()
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				// destroy interface
-				err = dClient.DestroyIntf(oldServerName)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				// Destroy old server here
-				err = dClient.DestroyServer(oldServerName)
-				if err != nil {
-					rb.Write([]byte(err.Error()))
-					os.Exit(1)
-				}
-				// happy panda here
-
-			default:
-				rb.Write([]byte("Both primary and secondary VPN servers were found active. Manual intervention needed."))
-				/*
-					Handling this behaviour might be odd, we will need to have some utilities that allow an operator
-					to save/manipulate their configuration/system. This could be that there are two servers that still exist,
-					or maybe a dangling config, or maybe the values across the system are out of sync and need to be
-					propogated across the system. The daemon configuration should have precedent where applicable.
-					Non applicable examples would be if there is a discrepency between the cloud provider WAN IP, and the one
-					on file.
-				*/
-			}
-
-		case "render-wg":
-			resp := dClient.RenderWgConfig(args[2])
-			rb.Write(resp.Body)
-		}
 	}
 	out := bytes.NewBuffer([]byte{})
 	err := json.Indent(out, rb.Bytes(), "", "    ")

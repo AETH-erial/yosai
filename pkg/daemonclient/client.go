@@ -378,21 +378,19 @@ Render the a wireguard configuration file
 */
 func (d DaemonClient) RenderWgConfig(arg string) daemon.SockMessage {
 	argMap := makeArgMap(arg)
-	outputToFile, ok := argMap["outmode"]
-	var outToFile bool
-	if ok {
-		if outputToFile == "save" {
-			outToFile = true
-		} else {
-			outToFile = false
-		}
-	} else {
-		outToFile = false
-	}
 
-	b, _ := json.Marshal(daemon.ConfigRenderRequest{Server: argMap["server"], Client: argMap["client"], OutputToFile: outToFile})
-	return d.Call(b, "daemon", "render-config")
+	b, _ := json.Marshal(daemon.ConfigRenderRequest{Server: argMap["server"], Client: argMap["client"]})
+	return d.Call(b, "vpn-config", "show")
+}
 
+/*
+Render the a wireguard configuration file
+*/
+func (d DaemonClient) SaveWgConfig(arg string) daemon.SockMessage {
+	argMap := makeArgMap(arg)
+
+	b, _ := json.Marshal(daemon.ConfigRenderRequest{Server: argMap["server"], Client: argMap["client"]})
+	return d.Call(b, "vpn-config", "save")
 }
 
 /*
@@ -445,6 +443,11 @@ func (d DaemonClient) ForceSave() error {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
+
+}
+
+func (d DaemonClient) ShowAllRoutes() daemon.SockMessage {
+	return d.Call([]byte(BLANK_JSON), "routes", "show")
 
 }
 

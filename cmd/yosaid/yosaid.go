@@ -67,16 +67,65 @@ func main() {
 	apikeyring.Rungs = append(apikeyring.Rungs, semaphoreConn)
 
 	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf)
-	ctx.Register("keyring", apikeyring.KeyringRouter)
-	ctx.Register("config", conf.ConfigRouter)
-	ctx.Register("config-peer", conf.PeerRouter)
-	ctx.Register("config-server", conf.ServerRouter)
-	ctx.Register("cloud", lnConn.LinodeRouter)
-	ctx.Register("ansible", semaphoreConn.BootstrapHandler)
-	ctx.Register("ansible-hosts", semaphoreConn.HostHandler)
-	ctx.Register("ansible-projects", semaphoreConn.ProjectHandler)
-	ctx.Register("ansible-job", semaphoreConn.TaskHandler)
-	ctx.Register("vault", hashiConn.VaultRouter)
-	ctx.Register("daemon", ctx.DaemonRouter)
+
+	lnRouter := linode.NewLinodeRouter()
+	lnRouter.Register(daemon.ADD, lnConn.AddLinodeHandler)
+	lnRouter.Register(daemon.SHOW, lnConn.ShowLinodeHandler)
+	lnRouter.Register(daemon.DELETE, lnConn.DeleteLinodeHandler)
+	lnRouter.Register(daemon.POLL, lnConn.PollLinodeHandler)
+
+	semHostsRouter := semaphore.NewSemaphoreRouter()
+	semHostsRouter.Register(daemon.ADD, semaphoreConn.AddHostHandler)
+	semHostsRouter.Register(daemon.DELETE, semaphoreConn.DeleteHostHandler)
+	semHostsRouter.Register(daemon.SHOW, semaphoreConn.ShowHostHandler)
+
+	semProjRouter := semaphore.NewSemaphoreRouter()
+	semProjRouter.Register(daemon.ADD, semaphoreConn.AddProjectHandler)
+	semProjRouter.Register(daemon.SHOW, semaphoreConn.ShowProjectHandler)
+
+	semTaskRouter := semaphore.NewSemaphoreRouter()
+	semTaskRouter.Register(daemon.RUN, semaphoreConn.RunTaskHandler)
+	semTaskRouter.Register(daemon.POLL, semaphoreConn.PollTaskHandler)
+	semTaskRouter.Register(daemon.SHOW, semaphoreConn.ShowTaskHandler)
+
+	semBootstrapRouter := semaphore.NewSemaphoreRouter()
+	semBootstrapRouter.Register(daemon.BOOTSTRAP, semaphoreConn.BootstrapHandler)
+
+	configPeerRouter := daemon.NewConfigRouter()
+	configPeerRouter.Register(daemon.ADD, conf.AddPeerHandler)
+	configPeerRouter.Register(daemon.DELETE, conf.DeletePeerHandler)
+
+	configServerRouter := daemon.NewConfigRouter()
+	configServerRouter.Register(daemon.ADD, conf.AddServerHandler)
+	configServerRouter.Register(daemon.DELETE, conf.DeleteServerHandler)
+
+	configRouter := daemon.NewConfigRouter()
+	configRouter.Register(daemon.SHOW, conf.ShowConfigHandler)
+	configRouter.Register(daemon.SAVE, conf.SaveConfigHandler)
+	configRouter.Register(daemon.RELOAD, conf.ReloadConfigHandler)
+
+	keyringRouter := daemon.NewKeyRingRouter()
+	keyringRouter.Register(daemon.SHOW, apikeyring.ShowKeyringHandler)
+	keyringRouter.Register(daemon.BOOTSTRAP, apikeyring.BootstrapKeyringHandler)
+	keyringRouter.Register(daemon.RELOAD, apikeyring.ReloadKeyringHandler)
+
+	vpnRouter := daemon.NewVpnRouter()
+	vpnRouter.Register(daemon.SHOW, ctx.VpnShowHandler)
+	vpnRouter.Register(daemon.SAVE, ctx.VpnSaveHandler)
+
+	ctxRouter := daemon.NewContextRouter()
+	ctxRouter.Register(daemon.SHOW, ctx.ShowRoutesHandler)
+
+	ctx.Register("cloud", lnRouter)
+	ctx.Register("keyring", keyringRouter)
+	ctx.Register("config", configRouter)
+	ctx.Register("config-peer", configPeerRouter)
+	ctx.Register("config-server", configServerRouter)
+	ctx.Register("ansible", semBootstrapRouter)
+	ctx.Register("ansible-hosts", semHostsRouter)
+	ctx.Register("ansible-projects", semProjRouter)
+	ctx.Register("ansible-task", semTaskRouter)
+	ctx.Register("vpn-config", vpnRouter)
+	ctx.Register("routes", ctxRouter)
 	ctx.ListenAndServe()
 }
