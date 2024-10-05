@@ -47,6 +47,47 @@ type Configuration interface {
 }
 
 /*
+TODO:
+- Make an implementation for using a configuration server, like a database or maybe a custom API
+- Have only 1 SSH key secret type in the keyring, and propogate it into the other systems more intelligently
+- intelligent keyring bootstrapping
+    [KEYS]
+		- read a SSH key for the VPS_SSH_KEY key
+		- read in another SSH key for the GIT_SSH_KEY incase theyre different
+		- Cloud API key
+		- Secrets API key
+		- Ansible API key
+		- VPS Root
+			- credentials
+			- ssh key
+		- VPS service account
+			- credentials
+			- ssh key
+
+    [SERVICES]
+    In order of priority:
+		- Environment variables
+		- configuration file
+		- configuration server
+		- user supplied input
+
+- Create a configuration server with REST API, grabs config based on
+    - LDAP
+	- Local
+	Configuration server should have a web UI that allows to create a config via a form, and then
+	save it to that users account.
+
+I would also like to get Hashicorp vault working with LDAP, so that I can build a large portion of this
+around LDAP. Instead of needing to supply the root token to HCV, I can have the client use their LDAP credentials
+all around, in HCV, the config server, and semaphore.
+
+
+What else needs to be done to allow for seemless experience for a 'user' across clients?
+- No on-system stored data
+- Easy bootstrapping
+*/
+
+/*
 Loads in the environment variable file at path, and then validates that all values in vars is present
 
 	    :param path: the path to the .env file

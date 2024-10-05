@@ -226,9 +226,10 @@ func (c *Context) ShowRoutesHandler(msg SockMessage) SockMessage {
 
 		routes := v.Routes()
 		for i := range routes {
-			data = data + "\u0009" + string(i)
+			data = data + "\u0009" + string(i) + "\n"
 
 		}
+		data = data + "\n"
 
 	}
 	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte(data))

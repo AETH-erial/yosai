@@ -79,6 +79,12 @@ func main() {
 			rb.Write(resp.Body)
 
 		}
+	case "routes":
+		switch args[1] {
+		case "show":
+			resp := dClient.ShowAllRoutes()
+			rb.Write(resp.Body)
+		}
 	case "vpn-config":
 		switch args[1] {
 		case "save":

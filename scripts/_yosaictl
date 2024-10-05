@@ -1,0 +1,43 @@
+#compdef yosaictl
+
+
+_yosaictl() {
+
+	declare -A yosaictl_cmd
+
+	output=$(yosaictl routes show)
+	# Initialize a variable to hold the current category
+	current_category=""
+
+	# Parse the output
+	while IFS= read -r line; do
+	  # Trim whitespace
+	  trimmed_line="${line:#	}"  # Removes leading tab
+
+	  # Check if the line starts with a non-tab character (a category)
+	  if [[ "$line" =~ ^[^[:space:]] ]]; then
+	    current_category="$trimmed_line"
+	  else
+	    # Add the command to the current category
+	    yosaictl_cmd[$current_category]+="${trimmed_line} "
+	  fi
+	done <<< "$output"
+
+
+
+
+	yosaictl routes show | grep -v '^\s' | tr '\n' ' ' | read -A elements
+	local state
+    
+	_arguments \
+    	  '1: :->yosaictl_target'\
+    	  '*: :->target_method'
+
+	case $state in
+		(yosaictl_target) _arguments '1:cmd_targets:($elements)' ;;
+		(*) compadd "$@" $(echo $yosaictl_cmd[$words[2]])
+	esac
+}
+
+_yosaictl "$@"
+
