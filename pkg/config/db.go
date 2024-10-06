@@ -2,8 +2,18 @@ package config
 
 import (
 	"database/sql"
+	"errors"
+	"io"
 
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	"github.com/mattn/go-sqlite3"
+)
+
+var (
+	ErrDuplicate    = errors.New("record already exists")
+	ErrNotExists    = errors.New("row not exists")
+	ErrUpdateFailed = errors.New("update failed")
+	ErrDeleteFailed = errors.New("delete failed")
 )
 
 type Username string
@@ -18,18 +28,25 @@ type User struct {
 }
 
 type DatabaseIO interface {
-	Migrate() error
-	AddUser(user User) error
-	UpdateCloud(daemon.ConfigFromFile) error
-	UpdateAnsible(daemon.ConfigFromFile) error
-	UpdateService(daemon.ConfigFromFile) error
+	Migrate()
+	AddUser(Username) error
+	UpdateUser(daemon.ConfigFromFile) error
 	Log(...string)
-	AddConfigForUser(daemon.ConfigFromFile, error)
 	GetConfigByUser() (daemon.ConfigFromFile, error)
 }
 
 type SQLiteRepo struct {
-	db *sql.DB
+	db  *sql.DB
+	out io.Writer
+}
+
+func (s *SQLiteRepo) Log(msg ...string) {
+	logMsg := "SQL Lite log:"
+	for i := range msg {
+		logMsg = logMsg + msg[i]
+	}
+	s.out.Write([]byte(logMsg))
+
 }
 
 // Instantiate a new SQLiteRepo struct
@@ -40,18 +57,12 @@ func NewSQLiteRepo(db *sql.DB) *SQLiteRepo {
 
 }
 
-func (s *SQLiteRepo) AddUser(user User) error {
+func (s *SQLiteRepo) Migrate() {
 
-	singleUser := `
-    CREATE TABLE IF NOT EXISTS ?(
-        id INTEGER NOT NULL,
+	userTable := `
+    CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL,
-        cloud_config_id INTEGER NOT NULL,
-        ansible_config_id INTEGER NOT NULL UNIQUE,
-        servers_id INTEGER NOT NULL,
-		clients_id INTEGER NOT NULL,
-		vpn_config_id INTEGER NOT NULL,
-		network TEXT NOT NULL
     );
     `
 
@@ -74,25 +85,65 @@ func (s *SQLiteRepo) AddUser(user User) error {
 	);`
 	serverTable := `
 	CREATE TABLE IF NOT EXISTS servers(
-	    
-	)`
-	clientTable := ``
-	vpnTable := ``
-	// Update the users ID and propogate it into the id for each of the reference tables
-	_, err := s.db.Exec(singleUser, user.Name)
-	return err
+	    user_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		wan_ipv4 TEXT NOT NULL,
+		vpn_ipv4 TEXT NOT NULL,
+		port INTEGER NOT NULL  
+	);`
 
-}
+	clientTable := `
 
-// Creates a new SQL table with necessary data
-func (s *SQLiteRepo) Init() error {
-	userTable := `
-    CREATE TABLE IF NOT EXISTS users(
-	    name TEXT PRIMARY KEY,
-		id INTEGER AUTOINCREMENT
+	CREATE TABLE IF NOT EXISTS clients(
+	    user_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		pubkey TEXT NOT NULL,
+		vpn_ipv4 TEXT NOT NULL,
+		default BOOLEAN NOT NULL
+	);`
+
+	vpnTable := `
+    CREATE TABLE IF NOT EXISTS vpn(
+	    vpn_ip TEXT NOT NULL,
+		vpn_subnet_mask INTEGER NOT NULL
 	);
 	`
+	queries := []string{
+		userTable,
+		cloudTable,
+		ansibleTable,
+		serverTable,
+		clientTable,
+		vpnTable,
+	}
+	for i := range queries {
+		_, err := s.db.Exec(queries[i])
+		if err != nil {
+			s.Log(err.Error())
+		}
+	}
+}
 
-	_, err := s.db.Exec(userTable)
-	return err
+/*
+Add a user to the database and return a User struct
+
+	:param name: the name of the user
+*/
+func (s *SQLiteRepo) AddUser(name Username) (User, error) {
+	var user User
+	res, err := s.db.Exec("INSERT INTO users(name) values(?)", name)
+	if err != nil {
+		var sqliteErr sqlite3.Error
+		if errors.As(err, &sqliteErr) {
+			if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
+				return user, ErrDuplicate
+			}
+		}
+		return user, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return user, err
+	}
+	return User{Name: name, Id: int(id)}, nil
 }
