@@ -46,83 +46,102 @@ func (c *Context) CreateServer(msg SockMessage) SockMessage {
 }
 
 /*
-Route handler for all of the exposed functions that the daemon allows for
+Render the wireguard configuration seed to be used when templating into the config file
 
-	:param msg: a SockMessage containing all of the request information
+	:param req: the struct containing the target client/server pair for the configuration
 */
-func (c *Context) DaemonRouter(msg SockMessage) SockMessage {
-	switch msg.Method {
-	case "wg-up":
-		var req StartWireguardRequest
-		err := json.Unmarshal(msg.Body, &req)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		out, err := wg.ChangeWgInterfaceState(path.Join(c.Config.HostInfo.WireguardSavePath, req.InterfaceName+".conf"), "up")
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, out)
-	case "wg-down":
-		var req StartWireguardRequest
-		err := json.Unmarshal(msg.Body, &req)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		out, err := wg.ChangeWgInterfaceState(path.Join(c.Config.HostInfo.WireguardSavePath, req.InterfaceName+".conf"), "down")
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, out)
-
-	case "render-config":
-		var req ConfigRenderRequest
-		err := json.Unmarshal(msg.Body, &req)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		serverKeypair, err := c.keyring.GetKey(req.Server + "_" + c.Keytags.WgKeypairKeyname())
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		clientKeypair, err := c.keyring.GetKey(req.Client + "_" + c.Keytags.WgKeypairKeyname())
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		server, err := c.Config.GetServer(req.Server)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		client, err := c.Config.GetClient(req.Client)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		seed := wg.WireguardTemplateSeed{
-			VpnClientPrivateKey: clientKeypair.GetSecret(),
-			VpnClientAddress:    client.VpnIpv4.String() + "/32",
-			Peers: []wg.WireguardTemplatePeer{
-				wg.WireguardTemplatePeer{
-					Pubkey:  serverKeypair.GetPublic(),
-					Address: server.WanIpv4,
-					Port:    c.Config.VpnServerPort(),
-				},
-			}}
-		cfg, err := wg.RenderClientConfiguration(seed)
-		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-		}
-		if req.OutputToFile == true {
-			fpath := path.Join(c.Config.HostInfo.WireguardSavePath, server.Name+".conf")
-			err = os.WriteFile(fpath, cfg, 0666)
-			if err != nil {
-				return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-			}
-			return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved to: "+fpath))
-		}
-
-		return *NewSockMessage(MsgResponse, REQUEST_OK, cfg)
-	default:
-		return *NewSockMessage(MsgResponse, REQUEST_UNRESOLVED, []byte("Unresolved Method"))
+func (c *Context) configSeed(req ConfigRenderRequest) (wg.WireguardTemplateSeed, error) {
+	var seed wg.WireguardTemplateSeed
+	serverKeypair, err := c.keyring.GetKey(req.Server + "_" + c.Keytags.WgKeypairKeyname())
+	if err != nil {
+		return seed, err
 	}
+	clientKeypair, err := c.keyring.GetKey(req.Client + "_" + c.Keytags.WgKeypairKeyname())
+	if err != nil {
+		return seed, err
+	}
+	server, err := c.Config.GetServer(req.Server)
+	if err != nil {
+		return seed, err
+	}
+	client, err := c.Config.GetClient(req.Client)
+	if err != nil {
+		return seed, err
+	}
+	seed = wg.WireguardTemplateSeed{
+		VpnClientPrivateKey: clientKeypair.GetSecret(),
+		VpnClientAddress:    client.VpnIpv4.String() + "/32",
+		Peers: []wg.WireguardTemplatePeer{
+			{
+				Pubkey:  serverKeypair.GetPublic(),
+				Address: server.WanIpv4,
+				Port:    c.Config.VpnServerPort(),
+			},
+		}}
+	return seed, nil
+}
 
+/*
+wrapping the VPN show configuration function in a route friendly interface
+
+	:param msg: a message to parse from the daemon socket
+*/
+func (c *Context) VpnShowHandler(msg SockMessage) SockMessage {
+	var req ConfigRenderRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	seed, err := c.configSeed(req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	cfg, err := wg.RenderClientConfiguration(seed)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, cfg)
+}
+
+/*
+wrapping the VPN save configuration function in a route friendly interface
+
+	:param msg: a message to parse from the daemon socket
+*/
+func (c *Context) VpnSaveHandler(msg SockMessage) SockMessage {
+	var req ConfigRenderRequest
+	err := json.Unmarshal(msg.Body, &req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	seed, err := c.configSeed(req)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	cfg, err := wg.RenderClientConfiguration(seed)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	fpath := path.Join(c.Config.HostInfo.WireguardSavePath, req.Server+".conf")
+	err = os.WriteFile(fpath, cfg, 0666)
+	if err != nil {
+		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved to: "+fpath))
+}
+
+type VpnRouter struct {
+	routes map[Method]func(SockMessage) SockMessage
+}
+
+func (v *VpnRouter) Register(method Method, callable func(SockMessage) SockMessage) {
+	v.routes[method] = callable
+}
+
+func (v *VpnRouter) Routes() map[Method]func(SockMessage) SockMessage {
+	return v.routes
+}
+
+func NewVpnRouter() *VpnRouter {
+	return &VpnRouter{routes: map[Method]func(SockMessage) SockMessage{}}
 }

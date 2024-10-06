@@ -487,41 +487,34 @@ func (ln LinodeConnection) PollLinodeHandler(msg daemon.SockMessage) daemon.Sock
 }
 
 /*
-Handles the routing for each method that can be performed on the cloud target
+Wraps the show servers functionality in a the correct Route interface
 
-	:param msg: a daemon.SockMessage with request details
+	:param msg: a daemon.SockMessage that contains a request
 */
-func (ln LinodeConnection) LinodeRouter(msg daemon.SockMessage) daemon.SockMessage {
-
-	switch msg.Method {
-	case "show":
-		servers, err := ln.ListLinodes()
-		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
-		}
-		b, _ := json.Marshal(servers)
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
-	case "delete":
-		resp := ln.DeleteLinodeHandler(msg)
-		if resp.StatusCode != daemon.REQUEST_OK {
-			return *daemon.NewSockMessage(daemon.MsgResponse, resp.StatusCode, []byte("There was an error killing the requested server."))
-		}
-		return resp
-	case "add":
-		resp := ln.AddLinodeHandler(msg)
-		var addLnResp GetLinodeResponse
-		err := json.Unmarshal(resp.Body, &addLnResp)
-		if err != nil {
-			ln.Log("There was an error unmarshalling the response from internal route: ", msg.Target, msg.Method, err.Error())
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte("Error unmarshalling AddLinodeHandler response: "+err.Error()))
-		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, resp.Body)
-
-	case "poll":
-		return ln.PollLinodeHandler(msg)
-
+func (ln LinodeConnection) ShowLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+	servers, err := ln.ListLinodes()
+	if err != nil {
+		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolved Action"))
+	b, _ := json.Marshal(servers)
+	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+
+}
+
+type LinodeRouter struct {
+	routes map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage
+}
+
+func (l *LinodeRouter) Register(method daemon.Method, callable func(daemon.SockMessage) daemon.SockMessage) {
+	l.routes[method] = callable
+}
+
+func (l *LinodeRouter) Routes() map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage {
+	return l.routes
+}
+
+func NewLinodeRouter() *LinodeRouter {
+	return &LinodeRouter{routes: map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage{}}
 }
 
 /*

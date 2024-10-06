@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	SecretsApiPath = "v1/secret/data"
+	SecretsApiPath = "v1/kv/data"
 )
 
 type VaultAdd struct {
@@ -45,7 +45,9 @@ type VaultConnection struct {
 func (v VaultItem) GetPublic() string { return v.Public }
 func (v VaultItem) GetSecret() string { return v.Secret }
 func (v VaultItem) GetType() string   { return v.Type }
-func (v VaultItem) Prepare() string   { return "Unimplemented method" }
+func (v VaultItem) Prepare() string {
+	return "Unimplemented method"
+}
 
 // Returns the 'public' field of the credential, i.e. a username or something
 func (v VaultResponse) GetPublic() string {

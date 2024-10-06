@@ -54,6 +54,56 @@ const REQUEST_UNAUTHORIZED = 3
 const REQUEST_ACCEPTED = 4
 const REQUEST_UNRESOLVED = 5
 
+/*
+###############################
+##### Protocol v2 methods #####
+###############################
+*/
+
+type Method string
+
+func MethodCheck(m string) (Method, error) {
+	switch m {
+	case "show":
+		return SHOW, nil
+	case "add":
+		return ADD, nil
+	case "delete":
+		return DELETE, nil
+	case "bootstrap":
+		return BOOTSTRAP, nil
+	case "reload":
+		return RELOAD, nil
+	case "poll":
+		return POLL, nil
+	case "run":
+		return RUN, nil
+	case "save":
+		return SAVE, nil
+	}
+	return SHOW, &InvalidMethod{Method: m}
+
+}
+
+type InvalidMethod struct {
+	Method string
+}
+
+func (i *InvalidMethod) Error() string {
+	return "Invalid method passed: " + i.Method
+}
+
+const (
+	SHOW      Method = "show"
+	ADD       Method = "add"
+	DELETE    Method = "delete"
+	BOOTSTRAP Method = "bootstrap"
+	RELOAD    Method = "reload"
+	POLL      Method = "poll"
+	RUN       Method = "run"
+	SAVE      Method = "save"
+)
+
 type SockMessage struct {
 	Type       string // the type of message being decoded
 	TypeLen    int8   // The length of the Type, used for convenience when Marshalling
@@ -156,12 +206,53 @@ type Context struct {
 	conn     net.Listener
 	keyring  *ApiKeyRing
 	Keytags  keytags.Keytagger
-	routes   map[string]func(req SockMessage) SockMessage
+	routes   map[string]Router
 	sockPath string
 	Config   *ConfigFromFile
 	servers  []VpnServer
 	rwBuffer bytes.Buffer
 	stream   io.Writer
+}
+
+/*
+Show all of the route information for the context
+
+	:param msg: a message to parse from the daemon socket
+*/
+func (c *Context) ShowRoutesHandler(msg SockMessage) SockMessage {
+	var data string
+	for k, v := range c.routes {
+		data = data + k + "\n"
+
+		routes := v.Routes()
+		for i := range routes {
+			data = data + "\u0009" + string(i) + "\n"
+
+		}
+		data = data + "\n"
+
+	}
+	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte(data))
+
+}
+
+/*
+Context router
+*/
+type ContextRouter struct {
+	routes map[Method]func(SockMessage) SockMessage
+}
+
+func (c *ContextRouter) Register(method Method, callable func(SockMessage) SockMessage) {
+	c.routes[method] = callable
+}
+
+func (c *ContextRouter) Routes() map[Method]func(SockMessage) SockMessage {
+	return c.routes
+}
+
+func NewContextRouter() *ConfigRouter {
+	return &ConfigRouter{routes: map[Method]func(SockMessage) SockMessage{}}
 }
 
 /*
@@ -227,7 +318,7 @@ func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf *Config
 	if err != nil {
 		log.Fatal(err)
 	}
-	routes := map[string]func(req SockMessage) SockMessage{}
+	routes := map[string]Router{}
 	buf := make([]byte, 1024)
 	return &Context{conn: sock, sockPath: path, rwBuffer: *bytes.NewBuffer(buf), stream: rdr, keyring: apiKeyring,
 		routes: routes, Config: conf, Keytags: keytags.ConstKeytag{}}
@@ -240,8 +331,8 @@ Register a function to the daemons function router
 	    :param name: the name to map the function to. This will dictate how the CLI will resolve a keyword to the target function
 		:param callable: the callable that will be executed when the keyword from 'name' is passed to the CLI
 */
-func (c *Context) Register(name string, callable func(req SockMessage) SockMessage) {
-	c.routes[name] = callable
+func (c *Context) Register(name string, router Router) {
+	c.routes[name] = router
 }
 
 /*
@@ -277,11 +368,23 @@ Resolve an action to a function
 :param action: a parsed action from the sock stream
 */
 func (c *Context) resolveRoute(req SockMessage) SockMessage {
-	handlerFunc, ok := c.routes[req.Target]
+	router, ok := c.routes[req.Target]
 	if !ok {
-		err := &InvalidAction{Msg: "Invalid Action", Action: req.Target}
+		err := InvalidAction{Msg: "Invalid Action", Action: req.Target}
+		c.Log("Error finding a router for target: ", req.Target)
 		return SockMessage{StatusMsg: UNRESOLVEABLE, Body: []byte(err.Error())}
 	}
+	method, err := MethodCheck(req.Method)
+	if err != nil {
+		c.Log("Error parsing request: ", string(Marshal(req)), err.Error())
+	}
+	handlerFunc, ok := router.Routes()[method]
+	if !ok {
+		err := InvalidAction{Msg: "Unimplemented method", Action: req.Method}
+		c.Log("Error invoking the method: ", req.Method, "on the target: ", req.Target)
+		return SockMessage{StatusMsg: UNRESOLVEABLE, Body: []byte(err.Error())}
+	}
+
 	return handlerFunc(req)
 
 }
