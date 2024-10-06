@@ -4,6 +4,7 @@ go 1.22.3
 
 require (
 	github.com/joho/godotenv v1.5.1 // indirect
+	github.com/mattn/go-sqlite3 v1.14.24 // indirect
 	golang.org/x/crypto v0.13.0 // indirect
 	golang.org/x/net v0.15.0 // indirect
 	golang.org/x/sys v0.22.0 // indirect

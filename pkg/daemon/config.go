@@ -293,16 +293,16 @@ type ansibleConfig struct {
 }
 
 type serviceConfig struct {
-	Servers           map[string]VpnServer
-	Clients           map[string]VpnClient
-	VpnAddressSpace   net.IPNet
-	VpnAddresses      map[string]bool // Each key is a IPv4 in the VPN, and its corresponding value is what denotes if its in use or not. False == 'In use', True == 'available'
-	VpnMask           int             // The mask of the VPN
-	VpnServerPort     int             `json:"vpn_server_port"`
-	SecretsBackend    string          `json:"secrets_backend"`
-	SecretsBackendUrl string          `json:"secrets_backend_url"`
-	AnsibleBackend    string          `json:"ansible_backend"`
-	AnsibleBackendUrl string          `json:"ansible_backend_url"`
+	Servers           map[string]VpnServer `json:"servers"`
+	Clients           map[string]VpnClient `json:"clients"`
+	VpnAddressSpace   net.IPNet            `json:"vpn_address_space"`
+	VpnAddresses      map[string]bool      `json:"vpn_addresses"` // Each key is a IPv4 in the VPN, and its corresponding value is what denotes if its in use or not. False == 'In use', True == 'available'
+	VpnMask           int                  `json:"vpn_mask"`      // The mask of the VPN
+	VpnServerPort     int                  `json:"vpn_server_port"`
+	SecretsBackend    string               `json:"secrets_backend"`
+	SecretsBackendUrl string               `json:"secrets_backend_url"`
+	AnsibleBackend    string               `json:"ansible_backend"`
+	AnsibleBackendUrl string               `json:"ansible_backend_url"`
 }
 
 func (c *ConfigFromFile) GetServer(name string) (VpnServer, error) {
@@ -520,6 +520,22 @@ func (c *ConfigFromFile) Log(data ...string) {
 	c.stream.Write([]byte(fmt.Sprintf(LogMsgTmpl, time.Now().String(), data)))
 
 }
+
+type ConfigurationBuilder struct {
+	fileLocations []string
+}
+
+/*
+Walk through all of the possible configuration avenues, and build out the configuration.
+*/
+func (c ConfigurationBuilder) Build() *ConfigFromFile { return nil }
+
+func (c ConfigurationBuilder) readEnv() {}
+func (c ConfigurationBuilder) readFiles() {
+
+}
+
+func (c ConfigurationBuilder) readServer() {}
 
 func ReadConfig(path string) *ConfigFromFile {
 	b, err := os.ReadFile(path)
