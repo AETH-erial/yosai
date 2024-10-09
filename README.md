@@ -4,5 +4,6 @@ An automated private VPN service, intended for routing all network traffic to a 
 
 ### Todo
 - [ ] Make implementation for CherryServers
+- [ ] Make implementation for BitLaunch
 
 
