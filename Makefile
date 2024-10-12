@@ -2,10 +2,12 @@
 
 YOSAICTL = yosaictl
 YOSAID = yosaid
+YOSAISERVER = yosai-server
 
 build:
 	go build -o ./build/linux/$(YOSAICTL)/$(YOSAICTL) ./cmd/$(YOSAICTL)/$(YOSAICTL).go && \
-		go build -o ./build/linux/$(YOSAID)/$(YOSAID) ./cmd/$(YOSAID)/$(YOSAID).go
+		go build -o ./build/linux/$(YOSAID)/$(YOSAID) ./cmd/$(YOSAID)/$(YOSAID).go && \
+		go build -o ./build/linux/${YOSAISERVER}/$(YOSAISERVER) ./cmd/$(YOSAISERVER)/$(YOSAISERVER).go
 format:
 	go fmt ./...
 

@@ -25,6 +25,9 @@ _testmain.go
 *.prof
 build/*
 
+# database
+*.db
+
 # ignoring environment variable files
 *.env
 
