@@ -28,5 +28,10 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println("Database created and seeded.")
+	dbConf, err := configServerDb.GetConfigByUser("aeth")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%+v\n", dbConf)
 
 }

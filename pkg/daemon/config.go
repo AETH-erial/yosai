@@ -584,19 +584,15 @@ func (c *ConfigFromFile) Save(path string) error {
 
 }
 
+/*
+Create a new ConfigFromFile struct with initialized maps
+*/
+func NewConfigFromFile() *ConfigFromFile {
+	return &ConfigFromFile{Service: serviceConfig{Servers: map[string]VpnServer{}, Clients: map[string]VpnClient{}}}
+}
+
 func BlankConfig(path string) error {
-	config := ConfigFromFile{
-		Cloud: cloudConfig{
-			Image:      "",
-			Region:     "",
-			LinodeType: "",
-		},
-		Ansible: ansibleConfig{
-			Repo:   "",
-			Branch: "",
-		},
-		Service: serviceConfig{},
-	}
+	config := NewConfigFromFile()
 	b, err := json.Marshal(config)
 	if err != nil {
 		return err

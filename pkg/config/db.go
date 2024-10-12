@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"net"
 
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 	"github.com/mattn/go-sqlite3"
@@ -231,14 +232,17 @@ Create an entry in the vpn information table
 		:param config: the daemon.ConfigFromFile with the configuration data
 */
 func (s *SQLiteRepo) insertVpnInfo(user User, config daemon.ConfigFromFile) error {
-
 	trx, err := s.db.Begin()
 	if err != nil {
 		s.Log("Failed to start DB transaction: ", err.Error())
 		return err
 	}
 	defer trx.Rollback()
-	_, err = trx.Exec("INSERT INTO vpn(user_id, vpn_ip, vpn_subnet_mask) values(?,?,?)", user.Id, config.Service.VpnAddressSpace.String(), config.Service.VpnAddressSpace.Mask)
+
+	_, err = trx.Exec("INSERT INTO vpn(user_id, vpn_ip, vpn_subnet_mask) values(?,?,?)",
+		user.Id,
+		config.Service.VpnAddressSpace.String(),
+		config.Service.VpnMask)
 	if err != nil {
 		var sqliteErr sqlite3.Error
 		if errors.As(err, &sqliteErr) {
@@ -458,7 +462,65 @@ Get the configuration for the passed user
 
 	:param user: the calling user
 */
-func (s *SQLiteRepo) GetConfigByUser(user Username) (daemon.ConfigFromFile, error) {
-	var config daemon.ConfigFromFile
+func (s *SQLiteRepo) GetConfigByUser(username string) (daemon.ConfigFromFile, error) {
+	config := daemon.NewConfigFromFile()
+	user, err := s.getUser(username)
+	if err != nil {
+		return *config, err
+	}
+	row := s.db.QueryRow("SELECT * FROM cloud WHERE user_id = ?", user.Id)
+	if err := row.Scan(&user.Id, &config.Cloud.Image, &config.Cloud.Region, &config.Cloud.LinodeType); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return *config, ErrNotExists
+		}
+		return *config, err
+	}
+	row = s.db.QueryRow("SELECT * FROM ansible WHERE user_id = ?", user.Id)
+	if err := row.Scan(
+		&user.Id,
+		&config.Ansible.Repo,
+		&config.Ansible.Branch,
+		&config.Ansible.PlaybookName,
+		&config.Service.AnsibleBackend,
+		&config.Service.AnsibleBackendUrl); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return *config, ErrNotExists
+		}
+		return *config, err
+	}
+	rows, err := s.db.Query("SELECT * FROM servers WHERE user_id = ?", user.Id)
+	if err != nil {
+		return *config, err
+	}
+	for rows.Next() {
+		var server daemon.VpnServer
+		if err := rows.Scan(&user.Id, &server.Name, &server.WanIpv4, &server.VpnIpv4, &server.Port); err != nil {
+			return *config, err
+		}
+		config.Service.Servers[server.Name] = server
+	}
+	if err = rows.Err(); err != nil {
+		return *config, err
+	}
+	rows, err = s.db.Query("SELECT * FROM clients WHERE user_id = ?", user.Id)
+	if err != nil {
+		return *config, err
+	}
+	for rows.Next() {
+		var client daemon.VpnClient
+		if err := rows.Scan(&user.Id, &client.Name, &client.Pubkey, &client.VpnIpv4, &client.Default); err != nil {
+			return *config, err
+		}
+		config.Service.Clients[client.Name] = client
+	}
+	row = s.db.QueryRow("SELECT * FROM vpn WHERE user_id = ?", user.Id)
+	var vpnIp string
+	if err = row.Scan(&user.Id, &config.Service.VpnAddressSpace, &config.Service.VpnMask); err != nil {
+		return *config, err
+	}
+	_, vpnIpv4, _ := net.ParseCIDR(vpnIp)
+	config.Service.VpnAddressSpace = *vpnIpv4
+
+	return *config, nil
 
 }
