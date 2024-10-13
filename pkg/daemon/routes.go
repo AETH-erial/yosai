@@ -75,7 +75,7 @@ func (c *Context) configSeed(req ConfigRenderRequest) (wg.WireguardTemplateSeed,
 			{
 				Pubkey:  serverKeypair.GetPublic(),
 				Address: server.WanIpv4,
-				Port:    c.Config.VpnServerPort(),
+				Port:    c.Config.Service.VpnServerPort,
 			},
 		}}
 	return seed, nil

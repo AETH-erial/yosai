@@ -41,7 +41,11 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading env file: ", err)
 	}
-	conf := daemon.ReadConfig(daemon.DefaultConfigLoc)
+	configServer := daemon.NewConfigServerImpl("localhost:8080", "http")
+	conf := configServer.Get()
+	fmt.Printf("config gotten: %+v\n", conf)
+	conf.SetConfigIO(configServer)
+	conf.SetStreamIO(os.Stdout)
 	apikeyring := daemon.NewKeyRing(conf, keytags.ConstKeytag{})
 	// Here we are demonstrating how you add a key to a keyring, in this
 	// case it is the top level keyring.

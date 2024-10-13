@@ -1082,7 +1082,7 @@ func (s SemaphoreConnection) projectBootstrapper() daemon.SockMessage {
 		s.Config.Log("Error creating the project: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	err = s.AddRepository(s.Config.Repo(), s.Config.Branch())
+	err = s.AddRepository(s.Config.Ansible.Repo, s.Config.Ansible.Branch)
 	if err != nil {
 		s.Config.Log("Error creating the repository: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
@@ -1092,12 +1092,12 @@ func (s SemaphoreConnection) projectBootstrapper() daemon.SockMessage {
 		s.Config.Log("Error getting the hashicorp keyring from the keyring: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	err = s.AddEnvironment(EnvironmentVariables{SecretsProviderUrl: s.Config.SecretsBackendUrl(), SecretsProviderApiKey: hashiKey.GetSecret()})
+	err = s.AddEnvironment(EnvironmentVariables{SecretsProviderUrl: s.Config.Service.SecretsBackendUrl, SecretsProviderApiKey: hashiKey.GetSecret()})
 	if err != nil {
 		s.Config.Log("Error creating the environment: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
 	}
-	err = s.AddJobTemplate(s.Config.PlaybookName(), fmt.Sprintf("%s:%s", s.Config.Repo(), s.Config.Branch()))
+	err = s.AddJobTemplate(s.Config.Ansible.PlaybookName, fmt.Sprintf("%s:%s", s.Config.Ansible.Repo, s.Config.Ansible.Branch))
 	if err != nil {
 		s.Config.Log("Error creating the job template: ", err.Error())
 		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
@@ -1380,7 +1380,7 @@ func (s SemaphoreConnection) YamlInventoryBuilder(hosts []daemon.VpnServer) Yaml
 			VpnNetworkAddress:    server.VpnIpv4.String(),
 			VpnServerPort:        server.Port,
 			Clients:              clientmap,
-			SecretsProvider:      s.Config.SecretsBackend(),
+			SecretsProvider:      s.Config.Service.SecretsBackend,
 			VpnNetMask:           s.Config.Service.VpnMask,
 			Name:                 server.Name}
 	}

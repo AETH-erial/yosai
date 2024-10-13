@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"strconv"
@@ -24,9 +26,7 @@ var EnvironmentVariables = []string{
 const DefaultConfigLoc = "./.config.json"
 
 type DaemonConfigIO interface {
-	Get() Configuration
-	Log(data ...string)
-	ConfigRouter(msg SockMessage) SockMessage
+	Get() *Configuration
 	Save(Configuration) error
 }
 
@@ -218,7 +218,7 @@ Wrapping the save config functionality in a router friendly interface
 	:param msg: a message to be parsed from the daemon socket
 */
 func (c *Configuration) SaveConfigHandler(msg SockMessage) SockMessage {
-	err := c.Save(DefaultConfigLoc)
+	err := c.cfgIO.Save(*c)
 	if err != nil {
 		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 	}
@@ -231,7 +231,8 @@ Wrapping the reload config functionality in a router friendly interface
 	:param msg: a message to be parsed from the daemon socket
 */
 func (c *Configuration) ReloadConfigHandler(msg SockMessage) SockMessage {
-	b, err := os.ReadFile(DefaultConfigLoc)
+	conf := c.cfgIO.Get()
+	b, err := json.Marshal(conf)
 	if err != nil {
 		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
 	}
@@ -260,6 +261,7 @@ func NewConfigRouter() *ConfigRouter {
 
 type Configuration struct {
 	stream   io.Writer
+	cfgIO    DaemonConfigIO
 	Cloud    cloudConfig   `json:"cloud"`
 	Ansible  ansibleConfig `json:"ansible"`
 	Service  serviceConfig `json:"service"`
@@ -450,51 +452,10 @@ type ServerNotFound struct{}
 
 func (s *ServerNotFound) Error() string { return "Server with the priority passed was not found." }
 
-func (c *Configuration) SetRepo(val string)              { c.Ansible.Repo = val }
-func (c *Configuration) SetBranch(val string)            { c.Ansible.Branch = val }
-func (c *Configuration) SetPlaybookName(val string)      { c.Ansible.PlaybookName = val }
-func (c *Configuration) SetImage(val string)             { c.Cloud.Image = val }
-func (c *Configuration) SetRegion(val string)            { c.Cloud.Region = val }
-func (c *Configuration) SetLinodeType(val string)        { c.Cloud.LinodeType = val }
-func (c *Configuration) SetSecretsBackend(val string)    { c.Service.SecretsBackend = val }
-func (c *Configuration) SetSecretsBackendUrl(val string) { c.Service.SecretsBackendUrl = val }
-
-func (c *Configuration) Repo() string {
-	return c.Ansible.Repo
-}
-
-func (c *Configuration) Branch() string {
-	return c.Ansible.Branch
-}
-
-func (c *Configuration) PlaybookName() string { return c.Ansible.PlaybookName }
-
 type cloudConfig struct {
 	Image      string `json:"image"`
 	Region     string `json:"region"`
 	LinodeType string `json:"linode_type"`
-}
-
-func (c *Configuration) Image() string {
-	return c.Cloud.Image
-}
-
-func (c *Configuration) Region() string {
-	return c.Cloud.Region
-}
-
-func (c *Configuration) LinodeType() string {
-	return c.Cloud.LinodeType
-}
-
-func (c *Configuration) VpnServerPort() int {
-	return c.Service.VpnServerPort
-}
-func (c *Configuration) SecretsBackend() string {
-	return c.Service.SecretsBackend
-}
-func (c *Configuration) SecretsBackendUrl() string {
-	return c.Service.SecretsBackendUrl
 }
 
 /*
@@ -503,6 +464,14 @@ Log a message to the Contexts 'stream' io.Writer interface
 func (c *Configuration) Log(data ...string) {
 	c.stream.Write([]byte(fmt.Sprintf(LogMsgTmpl, time.Now().String(), data)))
 
+}
+
+func (c *Configuration) SetConfigIO(impl DaemonConfigIO) {
+	c.cfgIO = impl
+}
+
+func (c *Configuration) SetStreamIO(impl io.Writer) {
+	c.stream = impl
 }
 
 type ConfigurationBuilder struct {
@@ -521,8 +490,12 @@ func (c ConfigurationBuilder) readFiles() {
 
 func (c ConfigurationBuilder) readServer() {}
 
-func ReadConfig(path string) *Configuration {
-	b, err := os.ReadFile(path)
+type ConfigHostImpl struct {
+	path string
+}
+
+func (c ConfigHostImpl) Get() *Configuration {
+	b, err := os.ReadFile(c.path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -559,12 +532,105 @@ func ReadConfig(path string) *Configuration {
 
 }
 
-func (c *Configuration) Save(path string) error {
+func (c ConfigHostImpl) Save(config Configuration) error {
 	b, err := json.MarshalIndent(c, " ", "    ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0666)
+	return os.WriteFile(c.path, b, 0666)
+
+}
+
+func NewConfigServerImpl(hostname string, serverProto string) ConfigServerImpl {
+	return ConfigServerImpl{
+		http:  http.Client{},
+		addr:  net.NS{Host: hostname},
+		proto: serverProto}
+}
+
+type ConfigServerImpl struct {
+	http  http.Client
+	addr  net.NS
+	proto string
+}
+
+func (s ConfigServerImpl) Get() *Configuration {
+	resp, err := s.get("/get-config/aeth")
+	if err != nil {
+		log.Fatal(err)
+	}
+	var config Configuration
+	if err = json.Unmarshal(resp, &config); err != nil {
+		log.Fatal(err)
+	}
+
+	return &config
+}
+func (s ConfigServerImpl) Save(config Configuration) error {
+	_, err := s.post(config, "/update-config/aeth")
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
+/*
+Agnostic GET call
+
+	:param path: the path to attach to the HTTP server
+*/
+func (s ConfigServerImpl) get(path string) ([]byte, error) {
+	url := fmt.Sprintf("%s://%s%s", s.proto, s.addr.Host, path)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(resp.Body)
+
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return b, nil
+
+}
+
+/*
+Agnostic POST call
+
+	    :param body: a struct that is JSON encodable
+		:param path: the path to attach to the HTTP server
+*/
+func (s ConfigServerImpl) post(body interface{}, path string) ([]byte, error) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s://%s%s", s.proto, s.addr.Host, path)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(b))
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode > 299 {
+		return nil, &ConfigError{}
+	}
+	rb, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	return rb, nil
 
 }
 
