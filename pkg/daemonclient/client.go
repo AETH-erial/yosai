@@ -27,10 +27,10 @@ const BLANK_JSON = "{\"blank\": \"hey!\"}"
 /*
 Gets the configuration from the upstream daemon/server
 */
-func (d DaemonClient) GetConfig() daemon.ConfigFromFile {
+func (d DaemonClient) GetConfig() daemon.Configuration {
 
 	resp := d.Call([]byte(BLANK_JSON), "config", "show")
-	var cfg daemon.ConfigFromFile
+	var cfg daemon.Configuration
 	err := json.Unmarshal(resp.Body, &cfg)
 	if err != nil {
 		log.Fatal("error unmarshalling config struct ", err.Error())

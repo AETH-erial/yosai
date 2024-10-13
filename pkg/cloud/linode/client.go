@@ -77,7 +77,7 @@ type LinodeConnection struct {
 	Client    *http.Client
 	Keyring   daemon.DaemonKeyRing
 	KeyTagger keytags.Keytagger
-	Config    *daemon.ConfigFromFile
+	Config    *daemon.Configuration
 }
 
 // Logging wrapper

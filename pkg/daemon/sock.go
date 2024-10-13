@@ -208,7 +208,7 @@ type Context struct {
 	Keytags  keytags.Keytagger
 	routes   map[string]Router
 	sockPath string
-	Config   *ConfigFromFile
+	Config   *Configuration
 	servers  []VpnServer
 	rwBuffer bytes.Buffer
 	stream   io.Writer
@@ -312,7 +312,7 @@ func (c *Context) handleSyscalls() {
 /*
 Open a daemon context pointer
 */
-func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf *ConfigFromFile) *Context {
+func NewContext(path string, rdr io.Writer, apiKeyring *ApiKeyRing, conf *Configuration) *Context {
 
 	sock, err := net.Listen("unix", path)
 	if err != nil {

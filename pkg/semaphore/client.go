@@ -27,7 +27,7 @@ type SemaphoreConnection struct {
 	Client    *http.Client
 	Keyring   daemon.DaemonKeyRing
 	KeyTagger keytags.Keytagger
-	Config    *daemon.ConfigFromFile
+	Config    *daemon.Configuration
 	ServerUrl string
 	HttpProto string
 	ProjectId int
@@ -323,7 +323,7 @@ Create a new semaphore client
 		:param log: an io.Writer to write logfile to
 		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func NewSemaphoreClient(url string, proto string, keyring daemon.DaemonKeyRing, conf *daemon.ConfigFromFile, keytagger keytags.Keytagger) SemaphoreConnection {
+func NewSemaphoreClient(url string, proto string, keyring daemon.DaemonKeyRing, conf *daemon.Configuration, keytagger keytags.Keytagger) SemaphoreConnection {
 	client := &http.Client{}
 	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring, KeyTagger: keytagger, Config: conf}
 	semaphoreBootstrap.Log("Using mode ", proto)

@@ -32,6 +32,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	config.RunHttpServer(8080, configServerDb, os.Stdout)
 	fmt.Printf("%+v\n", dbConf)
 
 }

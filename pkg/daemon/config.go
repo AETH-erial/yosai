@@ -23,27 +23,11 @@ var EnvironmentVariables = []string{
 
 const DefaultConfigLoc = "./.config.json"
 
-type Configuration interface {
-	SetRepo(val string)
-	SetBranch(val string)
-	SetPlaybookName(val string)
-	SetImage(val string)
-	SetRegion(val string)
-	SetLinodeType(val string)
-	SetSecretsBackend(val string)
-	SetSecretsBackendUrl(val string)
-	GetServer(priority int8) (VpnServer, error)
-	SecretsBackend() string
-	SecretsBackendUrl() string
-	Repo() string
-	Branch() string
-	PlaybookName() string
-	Image() string
-	Region() string
-	LinodeType() string
+type DaemonConfigIO interface {
+	Get() Configuration
 	Log(data ...string)
 	ConfigRouter(msg SockMessage) SockMessage
-	Save(path string) error
+	Save(Configuration) error
 }
 
 /*
@@ -134,7 +118,7 @@ Wrapping the add peer functionality in a router friendly interface
 
 	:param msg: a message to be parsed from the daemon socket
 */
-func (c *ConfigFromFile) AddPeerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) AddPeerHandler(msg SockMessage) SockMessage {
 	var peer VpnClient
 	err := json.Unmarshal(msg.Body, &peer)
 	if err != nil {
@@ -152,7 +136,7 @@ Wrapping the delete peer functionality in a router friendly interface
 
 	:param msg: a message to be parsed from the daemon socket
 */
-func (c *ConfigFromFile) DeletePeerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) DeletePeerHandler(msg SockMessage) SockMessage {
 	var req VpnClient
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
@@ -176,7 +160,7 @@ Wrapping the add server functionality in a router friendly interface
 
 	:param msg: a message to be parsed from the daemon socket
 */
-func (c *ConfigFromFile) AddServerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) AddServerHandler(msg SockMessage) SockMessage {
 	var req VpnServer
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
@@ -196,7 +180,7 @@ Wrapping the delete server functionality in a router friendly interface
 
 	:param msg: a message to be parsed from the daemon socket
 */
-func (c *ConfigFromFile) DeleteServerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) DeleteServerHandler(msg SockMessage) SockMessage {
 	var req VpnServer
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
@@ -220,7 +204,7 @@ Wrapping the show config functionality in a router friendly interface
 
 	:param msg: a message to be parsed from the daemon socket
 */
-func (c *ConfigFromFile) ShowConfigHandler(msg SockMessage) SockMessage {
+func (c *Configuration) ShowConfigHandler(msg SockMessage) SockMessage {
 	b, err := json.MarshalIndent(&c, "", "   ")
 	if err != nil {
 		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
@@ -233,7 +217,7 @@ Wrapping the save config functionality in a router friendly interface
 
 	:param msg: a message to be parsed from the daemon socket
 */
-func (c *ConfigFromFile) SaveConfigHandler(msg SockMessage) SockMessage {
+func (c *Configuration) SaveConfigHandler(msg SockMessage) SockMessage {
 	err := c.Save(DefaultConfigLoc)
 	if err != nil {
 		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
@@ -246,7 +230,7 @@ Wrapping the reload config functionality in a router friendly interface
 
 	:param msg: a message to be parsed from the daemon socket
 */
-func (c *ConfigFromFile) ReloadConfigHandler(msg SockMessage) SockMessage {
+func (c *Configuration) ReloadConfigHandler(msg SockMessage) SockMessage {
 	b, err := os.ReadFile(DefaultConfigLoc)
 	if err != nil {
 		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
@@ -274,7 +258,7 @@ func NewConfigRouter() *ConfigRouter {
 	return &ConfigRouter{routes: map[Method]func(SockMessage) SockMessage{}}
 }
 
-type ConfigFromFile struct {
+type Configuration struct {
 	stream   io.Writer
 	Cloud    cloudConfig   `json:"cloud"`
 	Ansible  ansibleConfig `json:"ansible"`
@@ -305,7 +289,7 @@ type serviceConfig struct {
 	AnsibleBackendUrl string               `json:"ansible_backend_url"`
 }
 
-func (c *ConfigFromFile) GetServer(name string) (VpnServer, error) {
+func (c *Configuration) GetServer(name string) (VpnServer, error) {
 	server, ok := c.Service.Servers[name]
 	if ok {
 		return server, nil
@@ -319,7 +303,7 @@ func (c *ConfigFromFile) GetServer(name string) (VpnServer, error) {
 
 }
 
-func (c *ConfigFromFile) GetClient(name string) (VpnClient, error) {
+func (c *Configuration) GetClient(name string) (VpnClient, error) {
 	client, ok := c.Service.Clients[name]
 	if ok {
 		return client, nil
@@ -338,7 +322,7 @@ Add a VPN server to the Service configuration
 
 	:param server: a VpnServer struct modeling the data that comprises of a VPN server
 */
-func (c *ConfigFromFile) AddServer(addr net.IP, name string, wan string, port int) string {
+func (c *Configuration) AddServer(addr net.IP, name string, wan string, port int) string {
 	server, ok := c.Service.Servers[name]
 	var serverLabel string
 	if ok {
@@ -369,7 +353,7 @@ type VpnServer struct {
 Retrieve an available IPv4 from the VPN's set address space. Returns an error if an internal address cant be
 parsed to a valid IPv4, or if there are no available addresses left.
 */
-func (c *ConfigFromFile) GetAvailableVpnIpv4() (net.IP, error) {
+func (c *Configuration) GetAvailableVpnIpv4() (net.IP, error) {
 	for addr, used := range c.Service.VpnAddresses {
 		if !used {
 			parsedAddr := net.ParseIP(addr)
@@ -387,7 +371,7 @@ func (c *ConfigFromFile) GetAvailableVpnIpv4() (net.IP, error) {
 /*
 Return all of the clients from the client list
 */
-func (c *ConfigFromFile) VpnClients() []VpnClient {
+func (c *Configuration) VpnClients() []VpnClient {
 	clients := []VpnClient{}
 	for _, val := range c.Service.Clients {
 		clients = append(clients, val)
@@ -398,7 +382,7 @@ func (c *ConfigFromFile) VpnClients() []VpnClient {
 /*
 Get the default VPN client
 */
-func (c *ConfigFromFile) DefaultClient() (VpnClient, error) {
+func (c *Configuration) DefaultClient() (VpnClient, error) {
 	for name := range c.Service.Clients {
 		if c.Service.Clients[name].Default {
 			return c.Service.Clients[name], nil
@@ -413,7 +397,7 @@ resolve naming collision in the client list
 	:param existingName: the name of the existing client in the client list
 	:param dupeName: the desired name of the client to be added
 */
-func (c *ConfigFromFile) resolveName(existingName string, dupeName string) string {
+func (c *Configuration) resolveName(existingName string, dupeName string) string {
 	incr, err := strconv.Atoi(strings.Trim(existingName, dupeName))
 	if err != nil {
 		c.Log("Name: ", existingName, "in the client list broke naming convention.")
@@ -430,7 +414,7 @@ Register a client as a VPN client. This configuration will be propogated into se
 		:param pubkey: the Wireguard public key
 		:param name: the name/label of this client
 */
-func (c *ConfigFromFile) AddClient(addr net.IP, pubkey string, name string) string {
+func (c *Configuration) AddClient(addr net.IP, pubkey string, name string) string {
 	client, ok := c.Service.Clients[name]
 	var clientLabel string
 	if ok {
@@ -445,7 +429,7 @@ func (c *ConfigFromFile) AddClient(addr net.IP, pubkey string, name string) stri
 /*
 Frees up an address to be used
 */
-func (c *ConfigFromFile) FreeAddress(addr string) error {
+func (c *Configuration) FreeAddress(addr string) error {
 	_, ok := c.Service.VpnAddresses[addr]
 	if !ok {
 		return &VpnAddressSpaceError{Msg: "Address: " + addr + " is not in the designated VPN Address space."}
@@ -466,24 +450,24 @@ type ServerNotFound struct{}
 
 func (s *ServerNotFound) Error() string { return "Server with the priority passed was not found." }
 
-func (c *ConfigFromFile) SetRepo(val string)              { c.Ansible.Repo = val }
-func (c *ConfigFromFile) SetBranch(val string)            { c.Ansible.Branch = val }
-func (c *ConfigFromFile) SetPlaybookName(val string)      { c.Ansible.PlaybookName = val }
-func (c *ConfigFromFile) SetImage(val string)             { c.Cloud.Image = val }
-func (c *ConfigFromFile) SetRegion(val string)            { c.Cloud.Region = val }
-func (c *ConfigFromFile) SetLinodeType(val string)        { c.Cloud.LinodeType = val }
-func (c *ConfigFromFile) SetSecretsBackend(val string)    { c.Service.SecretsBackend = val }
-func (c *ConfigFromFile) SetSecretsBackendUrl(val string) { c.Service.SecretsBackendUrl = val }
+func (c *Configuration) SetRepo(val string)              { c.Ansible.Repo = val }
+func (c *Configuration) SetBranch(val string)            { c.Ansible.Branch = val }
+func (c *Configuration) SetPlaybookName(val string)      { c.Ansible.PlaybookName = val }
+func (c *Configuration) SetImage(val string)             { c.Cloud.Image = val }
+func (c *Configuration) SetRegion(val string)            { c.Cloud.Region = val }
+func (c *Configuration) SetLinodeType(val string)        { c.Cloud.LinodeType = val }
+func (c *Configuration) SetSecretsBackend(val string)    { c.Service.SecretsBackend = val }
+func (c *Configuration) SetSecretsBackendUrl(val string) { c.Service.SecretsBackendUrl = val }
 
-func (c *ConfigFromFile) Repo() string {
+func (c *Configuration) Repo() string {
 	return c.Ansible.Repo
 }
 
-func (c *ConfigFromFile) Branch() string {
+func (c *Configuration) Branch() string {
 	return c.Ansible.Branch
 }
 
-func (c *ConfigFromFile) PlaybookName() string { return c.Ansible.PlaybookName }
+func (c *Configuration) PlaybookName() string { return c.Ansible.PlaybookName }
 
 type cloudConfig struct {
 	Image      string `json:"image"`
@@ -491,32 +475,32 @@ type cloudConfig struct {
 	LinodeType string `json:"linode_type"`
 }
 
-func (c *ConfigFromFile) Image() string {
+func (c *Configuration) Image() string {
 	return c.Cloud.Image
 }
 
-func (c *ConfigFromFile) Region() string {
+func (c *Configuration) Region() string {
 	return c.Cloud.Region
 }
 
-func (c *ConfigFromFile) LinodeType() string {
+func (c *Configuration) LinodeType() string {
 	return c.Cloud.LinodeType
 }
 
-func (c *ConfigFromFile) VpnServerPort() int {
+func (c *Configuration) VpnServerPort() int {
 	return c.Service.VpnServerPort
 }
-func (c *ConfigFromFile) SecretsBackend() string {
+func (c *Configuration) SecretsBackend() string {
 	return c.Service.SecretsBackend
 }
-func (c *ConfigFromFile) SecretsBackendUrl() string {
+func (c *Configuration) SecretsBackendUrl() string {
 	return c.Service.SecretsBackendUrl
 }
 
 /*
 Log a message to the Contexts 'stream' io.Writer interface
 */
-func (c *ConfigFromFile) Log(data ...string) {
+func (c *Configuration) Log(data ...string) {
 	c.stream.Write([]byte(fmt.Sprintf(LogMsgTmpl, time.Now().String(), data)))
 
 }
@@ -528,7 +512,7 @@ type ConfigurationBuilder struct {
 /*
 Walk through all of the possible configuration avenues, and build out the configuration.
 */
-func (c ConfigurationBuilder) Build() *ConfigFromFile { return nil }
+func (c ConfigurationBuilder) Build() *Configuration { return nil }
 
 func (c ConfigurationBuilder) readEnv() {}
 func (c ConfigurationBuilder) readFiles() {
@@ -537,13 +521,13 @@ func (c ConfigurationBuilder) readFiles() {
 
 func (c ConfigurationBuilder) readServer() {}
 
-func ReadConfig(path string) *ConfigFromFile {
+func ReadConfig(path string) *Configuration {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	config := &ConfigFromFile{
+	config := &Configuration{
 		stream: os.Stdout,
 		Service: serviceConfig{
 			Clients: map[string]VpnClient{},
@@ -575,7 +559,7 @@ func ReadConfig(path string) *ConfigFromFile {
 
 }
 
-func (c *ConfigFromFile) Save(path string) error {
+func (c *Configuration) Save(path string) error {
 	b, err := json.MarshalIndent(c, " ", "    ")
 	if err != nil {
 		return err
@@ -585,14 +569,14 @@ func (c *ConfigFromFile) Save(path string) error {
 }
 
 /*
-Create a new ConfigFromFile struct with initialized maps
+Create a new Configuration struct with initialized maps
 */
-func NewConfigFromFile() *ConfigFromFile {
-	return &ConfigFromFile{Service: serviceConfig{Servers: map[string]VpnServer{}, Clients: map[string]VpnClient{}}}
+func NewConfiguration() *Configuration {
+	return &Configuration{Service: serviceConfig{Servers: map[string]VpnServer{}, Clients: map[string]VpnClient{}}}
 }
 
 func BlankConfig(path string) error {
-	config := NewConfigFromFile()
+	config := NewConfiguration()
 	b, err := json.Marshal(config)
 	if err != nil {
 		return err

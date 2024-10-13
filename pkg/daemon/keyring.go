@@ -155,7 +155,7 @@ func (s SshKey) GetType() string {
 type ApiKeyRing struct {
 	Rungs     []DaemonKeyRing
 	Keys      map[string]Key // hashmap with the keys in the keyring. Protected with getters and setters
-	Config    *ConfigFromFile
+	Config    *Configuration
 	KeyTagger keytags.Keytagger
 }
 
@@ -238,7 +238,7 @@ func (a *ApiKeyRing) Source() string {
 Create a new daemon keyring. Passing additional implementers of the DaemonKeyRing will
 allow the GetKey() method on the toplevel keyring to search all subsequent keyrings for a match.
 */
-func NewKeyRing(cfg *ConfigFromFile, keytagger keytags.Keytagger) *ApiKeyRing {
+func NewKeyRing(cfg *Configuration, keytagger keytags.Keytagger) *ApiKeyRing {
 	return &ApiKeyRing{
 		Keys:      map[string]Key{},
 		Rungs:     []DaemonKeyRing{},

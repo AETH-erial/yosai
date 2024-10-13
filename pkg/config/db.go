@@ -30,10 +30,10 @@ type User struct {
 
 type DatabaseIO interface {
 	Migrate()
-	AddUser(Username) error
-	UpdateUser(daemon.ConfigFromFile) error
+	AddUser(Username) (User, error)
+	UpdateUser(Username, daemon.Configuration) error
 	Log(...string)
-	GetConfigByUser(Username) (daemon.ConfigFromFile, error)
+	GetConfigByUser(Username) (daemon.Configuration, error)
 }
 
 type SQLiteRepo struct {
@@ -138,11 +138,10 @@ func (s *SQLiteRepo) Migrate() {
 /*
 Retrieve a user struct from, querying by their username
 
-	:param name: the unvalidated username of the querying user
+	:param name: the username of the querying user Note -> must validate the username before calling
 */
-func (s *SQLiteRepo) getUser(name string) (User, error) {
-	validatedUsername := ValidateUsername(name)
-	row := s.db.QueryRow("SELECT * FROM users WHERE name = ?", validatedUsername)
+func (s *SQLiteRepo) getUser(name Username) (User, error) {
+	row := s.db.QueryRow("SELECT * FROM users WHERE name = ?", name)
 
 	var user User
 	if err := row.Scan(&user.Id, &user.Name); err != nil {
@@ -157,10 +156,10 @@ func (s *SQLiteRepo) getUser(name string) (User, error) {
 /*
 Update all of the data for a users configuration
 
-		:param config: a daemon.ConfigFromFile to put into the database
+		:param config: a daemon.Configuration to put into the database
 	    :param user: the User struct representing the calling user
 */
-func (s *SQLiteRepo) UpdateUser(user User, config daemon.ConfigFromFile) error {
+func (s *SQLiteRepo) UpdateUser(username Username, config daemon.Configuration) error {
 
 	trx, err := s.db.Begin()
 	if err != nil {
@@ -168,7 +167,11 @@ func (s *SQLiteRepo) UpdateUser(user User, config daemon.ConfigFromFile) error {
 		return err
 	}
 	defer trx.Rollback()
-
+	user, err := s.getUser(username)
+	if err != nil {
+		s.Log("Error getting the user: ", string(username), err.Error())
+		return err
+	}
 	_, err = trx.Exec("UPDATE cloud SET user_id = ?, image = ?, region = ?, linode_type = ? WHERE user_id = ?",
 		user.Id,
 		config.Cloud.Image,
@@ -229,9 +232,9 @@ func (s *SQLiteRepo) UpdateUser(user User, config daemon.ConfigFromFile) error {
 Create an entry in the vpn information table
 
 	    :param user: the calling User
-		:param config: the daemon.ConfigFromFile with the configuration data
+		:param config: the daemon.Configuration with the configuration data
 */
-func (s *SQLiteRepo) insertVpnInfo(user User, config daemon.ConfigFromFile) error {
+func (s *SQLiteRepo) insertVpnInfo(user User, config daemon.Configuration) error {
 	trx, err := s.db.Begin()
 	if err != nil {
 		s.Log("Failed to start DB transaction: ", err.Error())
@@ -265,7 +268,7 @@ Create an entry in the client table for a user
 	    :param user: the calling User
 		:param cloudConfig: the cloud specific configuration for the user
 */
-func (s *SQLiteRepo) insertClient(user User, config daemon.ConfigFromFile) error {
+func (s *SQLiteRepo) insertClient(user User, config daemon.Configuration) error {
 	trx, err := s.db.Begin()
 	if err != nil {
 		s.Log("Failed to start DB transaction: ", err.Error())
@@ -304,7 +307,7 @@ Create an entry in the server table for a user
 	    :param user: the calling User
 		:param cloudConfig: the cloud specific configuration for the user
 */
-func (s *SQLiteRepo) insertServer(user User, config daemon.ConfigFromFile) error {
+func (s *SQLiteRepo) insertServer(user User, config daemon.Configuration) error {
 	trx, err := s.db.Begin()
 	if err != nil {
 		s.Log("Failed to start DB transaction: ", err.Error())
@@ -343,7 +346,7 @@ Create an entry in the ansible table for a user
 	    :param user: the calling User
 		:param cloudConfig: the cloud specific configuration for the user
 */
-func (s *SQLiteRepo) insertUserAnsible(user User, config daemon.ConfigFromFile) error {
+func (s *SQLiteRepo) insertUserAnsible(user User, config daemon.Configuration) error {
 	trx, err := s.db.Begin()
 	if err != nil {
 		s.Log("Failed to start DB transaction: ", err.Error())
@@ -380,7 +383,7 @@ Create an entry in the cloud table for a user
 	    :param user: the calling User
 		:param cloudConfig: the cloud specific configuration for the user
 */
-func (s *SQLiteRepo) insertUserCloud(user User, config daemon.ConfigFromFile) error {
+func (s *SQLiteRepo) insertUserCloud(user User, config daemon.Configuration) error {
 	trx, err := s.db.Begin()
 	if err != nil {
 		s.Log("Failed to start DB transaction: ", err.Error())
@@ -413,10 +416,10 @@ func (s *SQLiteRepo) insertUserCloud(user User, config daemon.ConfigFromFile) er
 Populate the different db tables with the users configuration
 
 	    :param user: the calling user
-		:param config: the daemon.ConfigFromFile to populate into the db
+		:param config: the daemon.Configuration to populate into the db
 */
-func (s *SQLiteRepo) SeedUser(user User, config daemon.ConfigFromFile) error {
-	seedFuncs := []func(User, daemon.ConfigFromFile) error{
+func (s *SQLiteRepo) SeedUser(user User, config daemon.Configuration) error {
+	seedFuncs := []func(User, daemon.Configuration) error{
 		s.insertClient,
 		s.insertServer,
 		s.insertUserAnsible,
@@ -462,8 +465,8 @@ Get the configuration for the passed user
 
 	:param user: the calling user
 */
-func (s *SQLiteRepo) GetConfigByUser(username string) (daemon.ConfigFromFile, error) {
-	config := daemon.NewConfigFromFile()
+func (s *SQLiteRepo) GetConfigByUser(username Username) (daemon.Configuration, error) {
+	config := daemon.NewConfiguration()
 	user, err := s.getUser(username)
 	if err != nil {
 		return *config, err
@@ -515,7 +518,7 @@ func (s *SQLiteRepo) GetConfigByUser(username string) (daemon.ConfigFromFile, er
 	}
 	row = s.db.QueryRow("SELECT * FROM vpn WHERE user_id = ?", user.Id)
 	var vpnIp string
-	if err = row.Scan(&user.Id, &config.Service.VpnAddressSpace, &config.Service.VpnMask); err != nil {
+	if err = row.Scan(&user.Id, &vpnIp, &config.Service.VpnMask); err != nil {
 		return *config, err
 	}
 	_, vpnIpv4, _ := net.ParseCIDR(vpnIp)
