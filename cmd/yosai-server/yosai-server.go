@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"os"
 
@@ -17,12 +16,21 @@ func main() {
 	}
 	configServerDb := config.NewSQLiteRepo(db, os.Stdout)
 	configServerDb.Migrate()
-	fmt.Println("Database created and seeded.")
-	dbConf, err := configServerDb.GetConfigByUser("aeth")
-	if err != nil {
-		log.Fatal(err)
-	}
+	/*
+		conf := daemon.NewConfigHostImpl("./.config.json").Get()
+		user, err := configServerDb.AddUser(config.ValidateUsername("aeth"))
+		if err != nil {
+			log.Fatal(err.Error(), "failed to add user")
+		}
+
+		configServerDb.SeedUser(user, *conf)
+		fmt.Println("Database created and seeded.")
+		dbConf, err := configServerDb.GetConfigByUser("aeth")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("%+v\n", dbConf)
+	*/
 	config.RunHttpServer(8080, configServerDb, os.Stdout)
-	fmt.Printf("%+v\n", dbConf)
 
 }

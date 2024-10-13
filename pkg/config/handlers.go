@@ -88,7 +88,7 @@ Handler for updating the calling users configuration
 */
 func (e *ExecutionHandler) UpdateUserConfiguration(w http.ResponseWriter, req *http.Request) {
 	e.Log("Recieved request: ", req.URL.Path)
-	if req.Method != http.MethodPost || req.Method != http.MethodPatch {
+	if req.Method != http.MethodPost {
 		e.Log("Unsupported method: ", req.Method, "to endpoint: ", req.URL.Path)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return

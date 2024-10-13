@@ -494,6 +494,10 @@ type ConfigHostImpl struct {
 	path string
 }
 
+func NewConfigHostImpl(path string) ConfigHostImpl {
+	return ConfigHostImpl{path: path}
+}
+
 func (c ConfigHostImpl) Get() *Configuration {
 	b, err := os.ReadFile(c.path)
 	if err != nil {

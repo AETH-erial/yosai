@@ -112,11 +112,13 @@ func (s *SQLiteRepo) Migrate() {
 	);
 	`
 
-	vpnTable := `
-    CREATE TABLE IF NOT EXISTS vpn(
+	serviceTable := `
+    CREATE TABLE IF NOT EXISTS service(
 	    user_id INTEGER NOT NULL,
 	    vpn_ip TEXT NOT NULL,
-		vpn_subnet_mask INTEGER NOT NULL
+		vpn_subnet_mask INTEGER NOT NULL,
+		secrets_backend TEXT NOT NULL,
+		secrets_backend_url TEXT NOT NULL
 	);
 	`
 	queries := []string{
@@ -125,7 +127,7 @@ func (s *SQLiteRepo) Migrate() {
 		ansibleTable,
 		serverTable,
 		clientTable,
-		vpnTable,
+		serviceTable,
 	}
 	for i := range queries {
 		_, err := s.db.Exec(queries[i])
@@ -140,7 +142,7 @@ Retrieve a user struct from, querying by their username
 
 	:param name: the username of the querying user Note -> must validate the username before calling
 */
-func (s *SQLiteRepo) getUser(name Username) (User, error) {
+func (s *SQLiteRepo) GetUser(name Username) (User, error) {
 	row := s.db.QueryRow("SELECT * FROM users WHERE name = ?", name)
 
 	var user User
@@ -167,7 +169,7 @@ func (s *SQLiteRepo) UpdateUser(username Username, config daemon.Configuration) 
 		return err
 	}
 	defer trx.Rollback()
-	user, err := s.getUser(username)
+	user, err := s.GetUser(username)
 	if err != nil {
 		s.Log("Error getting the user: ", string(username), err.Error())
 		return err
@@ -220,6 +222,16 @@ func (s *SQLiteRepo) UpdateUser(username Username, config daemon.Configuration) 
 			return err
 		}
 	}
+	_, err = trx.Exec("UPDATE service SET user_id =? , vpn_ip = ?, vpn_subnet_mask = ?, secrets_backend = ?, secrets_backend_url = ? WHERE user_id = ?",
+		user.Id,
+		config.Service.VpnAddressSpace.String(),
+		config.Service.VpnMask,
+		config.Service.SecretsBackend,
+		config.Service.SecretsBackendUrl,
+		user.Id)
+	if err != nil {
+		return err
+	}
 	err = trx.Commit()
 	if err != nil {
 		return err
@@ -234,18 +246,29 @@ Create an entry in the vpn information table
 	    :param user: the calling User
 		:param config: the daemon.Configuration with the configuration data
 */
-func (s *SQLiteRepo) insertVpnInfo(user User, config daemon.Configuration) error {
+func (s *SQLiteRepo) insertServiceInfo(user User, config daemon.Configuration) error {
 	trx, err := s.db.Begin()
 	if err != nil {
 		s.Log("Failed to start DB transaction: ", err.Error())
 		return err
 	}
 	defer trx.Rollback()
+	rows, err := trx.Query("SELECT * FROM service WHERE user_id = ?", user.Id)
+	if err != nil {
+		s.Log("Failed to perform pre-insert check", err.Error())
+		return err
+	}
+	if rows.Next() { // Checking if the 'length' of returned rows is non-zero
+		s.Log("Duplicate INSERT attempted, update instead.", err.Error())
+		return ErrDuplicate
+	}
 
-	_, err = trx.Exec("INSERT INTO vpn(user_id, vpn_ip, vpn_subnet_mask) values(?,?,?)",
+	_, err = trx.Exec("INSERT INTO service(user_id, vpn_ip, vpn_subnet_mask, secrets_backend, secrets_backend_url) values(?,?,?,?,?)",
 		user.Id,
 		config.Service.VpnAddressSpace.String(),
-		config.Service.VpnMask)
+		config.Service.VpnMask,
+		config.Service.SecretsBackend,
+		config.Service.SecretsBackendUrl)
 	if err != nil {
 		var sqliteErr sqlite3.Error
 		if errors.As(err, &sqliteErr) {
@@ -275,6 +298,15 @@ func (s *SQLiteRepo) insertClient(user User, config daemon.Configuration) error 
 		return err
 	}
 	defer trx.Rollback()
+	rows, err := trx.Query("SELECT * FROM clients WHERE user_id = ?", user.Id)
+	if err != nil {
+		s.Log("Failed to perform pre-insert check", err.Error())
+		return err
+	}
+	if rows.Next() { // Checking if the 'length' of returned rows is non-zero
+		s.Log("Duplicate INSERT attempted, update instead.", err.Error())
+		return ErrDuplicate
+	}
 	for i := range config.Service.Clients {
 		client := config.Service.Clients[i]
 		_, err = trx.Exec("INSERT INTO clients(user_id, name, pubkey, vpn_ipv4, default_client) values(?,?,?,?,?)",
@@ -284,12 +316,7 @@ func (s *SQLiteRepo) insertClient(user User, config daemon.Configuration) error 
 			client.VpnIpv4,
 			client.Default)
 		if err != nil {
-			var sqliteErr sqlite3.Error
-			if errors.As(err, &sqliteErr) {
-				if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
-					return ErrDuplicate
-				}
-			}
+			s.Log("Failed to create row: ", err.Error())
 			return err
 		}
 	}
@@ -314,6 +341,15 @@ func (s *SQLiteRepo) insertServer(user User, config daemon.Configuration) error 
 		return err
 	}
 	defer trx.Rollback()
+	rows, err := trx.Query("SELECT * FROM servers WHERE user_id = ?", user.Id)
+	if err != nil {
+		s.Log("Failed to perform pre-insert check", err.Error())
+		return err
+	}
+	if rows.Next() { // Checking if the 'length' of returned rows is non-zero
+		s.Log("Duplicate INSERT attempted, update instead.", err.Error())
+		return ErrDuplicate
+	}
 	for i := range config.Service.Servers {
 		server := config.Service.Servers[i]
 		_, err = trx.Exec("INSERT INTO servers(user_id, name, wan_ipv4, vpn_ipv4, port) values(?,?,?,?,?)",
@@ -323,12 +359,7 @@ func (s *SQLiteRepo) insertServer(user User, config daemon.Configuration) error 
 			server.VpnIpv4,
 			server.Port)
 		if err != nil {
-			var sqliteErr sqlite3.Error
-			if errors.As(err, &sqliteErr) {
-				if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
-					return ErrDuplicate
-				}
-			}
+			s.Log("Failed to create row: ", err.Error())
 			return err
 		}
 	}
@@ -353,6 +384,15 @@ func (s *SQLiteRepo) insertUserAnsible(user User, config daemon.Configuration) e
 		return err
 	}
 	defer trx.Rollback()
+	rows, err := trx.Query("SELECT * FROM ansible WHERE user_id = ?", user.Id)
+	if err != nil {
+		s.Log("Failed to perform pre-insert check", err.Error())
+		return err
+	}
+	if rows.Next() { // Checking if the 'length' of returned rows is non-zero
+		s.Log("Duplicate INSERT attempted, update instead.", err.Error())
+		return ErrDuplicate
+	}
 	_, err = trx.Exec("INSERT INTO ansible(user_id, repo_url, branch, playbook_name, ansible_backend, ansible_backend_url) values(?,?,?,?,?,?)",
 		user.Id,
 		config.Ansible.Repo,
@@ -361,12 +401,7 @@ func (s *SQLiteRepo) insertUserAnsible(user User, config daemon.Configuration) e
 		config.Service.AnsibleBackend,
 		config.Service.AnsibleBackendUrl)
 	if err != nil {
-		var sqliteErr sqlite3.Error
-		if errors.As(err, &sqliteErr) {
-			if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
-				return ErrDuplicate
-			}
-		}
+		s.Log("Failed to create row: ", err.Error())
 		return err
 	}
 	err = trx.Commit()
@@ -390,18 +425,22 @@ func (s *SQLiteRepo) insertUserCloud(user User, config daemon.Configuration) err
 		return err
 	}
 	defer trx.Rollback()
+	rows, err := trx.Query("SELECT * FROM cloud WHERE user_id = ?", user.Id)
+	if err != nil {
+		s.Log("Failed to perform pre-insert check", err.Error())
+		return err
+	}
+	if rows.Next() { // Checking if the 'length' of returned rows is non-zero
+		s.Log("Duplicate INSERT attempted, update instead.", err.Error())
+		return ErrDuplicate
+	}
 	_, err = trx.Exec("INSERT INTO cloud(user_id, image, region, linode_type) values(?,?,?,?)",
 		user.Id,
 		config.Cloud.Image,
 		config.Cloud.Region,
 		config.Cloud.LinodeType)
 	if err != nil {
-		var sqliteErr sqlite3.Error
-		if errors.As(err, &sqliteErr) {
-			if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
-				return ErrDuplicate
-			}
-		}
+		s.Log("Failed to create row: ", err.Error())
 		return err
 	}
 	err = trx.Commit()
@@ -424,7 +463,7 @@ func (s *SQLiteRepo) SeedUser(user User, config daemon.Configuration) error {
 		s.insertServer,
 		s.insertUserAnsible,
 		s.insertUserCloud,
-		s.insertVpnInfo,
+		s.insertServiceInfo,
 	}
 	for i := range seedFuncs {
 		err := seedFuncs[i](user, config)
@@ -443,14 +482,23 @@ Add a user to the database and return a User struct
 */
 func (s *SQLiteRepo) AddUser(name Username) (User, error) {
 	var user User
-	res, err := s.db.Exec("INSERT INTO users(name) values(?)", name)
+	rows, err := s.db.Query("SELECT * FROM users WHERE name = ?", name)
 	if err != nil {
+		s.Log(err.Error())
 		var sqliteErr sqlite3.Error
 		if errors.As(err, &sqliteErr) {
 			if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
 				return user, ErrDuplicate
 			}
 		}
+		return user, err
+	}
+	if rows.Next() {
+		s.Log("Duplicate username, please use another")
+		return user, ErrDuplicate
+	}
+	res, err := s.db.Exec("INSERT INTO users(name) values(?)", name)
+	if err != nil {
 		return user, err
 	}
 	id, err := res.LastInsertId()
@@ -467,7 +515,7 @@ Get the configuration for the passed user
 */
 func (s *SQLiteRepo) GetConfigByUser(username Username) (daemon.Configuration, error) {
 	config := daemon.NewConfiguration()
-	user, err := s.getUser(username)
+	user, err := s.GetUser(username)
 	if err != nil {
 		return *config, err
 	}
@@ -516,9 +564,9 @@ func (s *SQLiteRepo) GetConfigByUser(username Username) (daemon.Configuration, e
 		}
 		config.Service.Clients[client.Name] = client
 	}
-	row = s.db.QueryRow("SELECT * FROM vpn WHERE user_id = ?", user.Id)
+	row = s.db.QueryRow("SELECT * FROM service WHERE user_id = ?", user.Id)
 	var vpnIp string
-	if err = row.Scan(&user.Id, &vpnIp, &config.Service.VpnMask); err != nil {
+	if err = row.Scan(&user.Id, &vpnIp, &config.Service.VpnMask, &config.Service.SecretsBackend, &config.Service.SecretsBackendUrl); err != nil {
 		return *config, err
 	}
 	_, vpnIpv4, _ := net.ParseCIDR(vpnIp)
