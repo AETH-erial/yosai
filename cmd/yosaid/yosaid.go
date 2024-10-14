@@ -42,7 +42,8 @@ func main() {
 		log.Fatal("Error loading env file: ", err)
 	}
 	configServer := daemon.NewConfigServerImpl("localhost:8080", "http")
-	conf := configServer.Get()
+	conf := daemon.NewConfiguration(os.Stdout)
+	configServer.Propogate(conf)
 	fmt.Printf("config gotten: %+v\n", conf)
 	conf.SetConfigIO(configServer)
 	conf.SetStreamIO(os.Stdout)

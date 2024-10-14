@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"io"
@@ -117,6 +118,7 @@ func (s *SQLiteRepo) Migrate() {
 	    user_id INTEGER NOT NULL,
 	    vpn_ip TEXT NOT NULL,
 		vpn_subnet_mask INTEGER NOT NULL,
+		vpn_server_port INTEGER NOT NULL,
 		secrets_backend TEXT NOT NULL,
 		secrets_backend_url TEXT NOT NULL
 	);
@@ -196,7 +198,7 @@ func (s *SQLiteRepo) UpdateUser(username Username, config daemon.Configuration) 
 	}
 	for i := range config.Service.Servers {
 		server := config.Service.Servers[i]
-		_, err := trx.Exec("UPDATE servers SET user_id = ?, name = ?, wan_ipv4 = ?, vpn_ip = ?, port = ? WHERE user_id = ? AND name = ?",
+		_, err := trx.Exec("UPDATE servers SET user_id = ?, name = ?, wan_ipv4 = ?, vpn_ipv4 = ?, port = ? WHERE user_id = ? AND name = ?",
 			user.Id,
 			server.Name,
 			server.WanIpv4,
@@ -222,10 +224,11 @@ func (s *SQLiteRepo) UpdateUser(username Username, config daemon.Configuration) 
 			return err
 		}
 	}
-	_, err = trx.Exec("UPDATE service SET user_id =? , vpn_ip = ?, vpn_subnet_mask = ?, secrets_backend = ?, secrets_backend_url = ? WHERE user_id = ?",
+	_, err = trx.Exec("UPDATE service SET user_id = ? , vpn_ip = ?, vpn_subnet_mask = ?, vpn_server_port = ?, secrets_backend = ?, secrets_backend_url = ? WHERE user_id = ?",
 		user.Id,
 		config.Service.VpnAddressSpace.String(),
 		config.Service.VpnMask,
+		config.Service.VpnServerPort,
 		config.Service.SecretsBackend,
 		config.Service.SecretsBackendUrl,
 		user.Id)
@@ -236,6 +239,7 @@ func (s *SQLiteRepo) UpdateUser(username Username, config daemon.Configuration) 
 	if err != nil {
 		return err
 	}
+	s.Log("Transaction commited.")
 
 	return nil
 }
@@ -263,10 +267,11 @@ func (s *SQLiteRepo) insertServiceInfo(user User, config daemon.Configuration) e
 		return ErrDuplicate
 	}
 
-	_, err = trx.Exec("INSERT INTO service(user_id, vpn_ip, vpn_subnet_mask, secrets_backend, secrets_backend_url) values(?,?,?,?,?)",
+	_, err = trx.Exec("INSERT INTO service(user_id, vpn_ip, vpn_subnet_mask, vpn_server_port, secrets_backend, secrets_backend_url) values(?,?,?,?,?,?)",
 		user.Id,
 		config.Service.VpnAddressSpace.String(),
 		config.Service.VpnMask,
+		config.Service.VpnServerPort,
 		config.Service.SecretsBackend,
 		config.Service.SecretsBackendUrl)
 	if err != nil {
@@ -514,7 +519,7 @@ Get the configuration for the passed user
 	:param user: the calling user
 */
 func (s *SQLiteRepo) GetConfigByUser(username Username) (daemon.Configuration, error) {
-	config := daemon.NewConfiguration()
+	config := daemon.NewConfiguration(bytes.NewBuffer([]byte{}))
 	user, err := s.GetUser(username)
 	if err != nil {
 		return *config, err
@@ -566,7 +571,7 @@ func (s *SQLiteRepo) GetConfigByUser(username Username) (daemon.Configuration, e
 	}
 	row = s.db.QueryRow("SELECT * FROM service WHERE user_id = ?", user.Id)
 	var vpnIp string
-	if err = row.Scan(&user.Id, &vpnIp, &config.Service.VpnMask, &config.Service.SecretsBackend, &config.Service.SecretsBackendUrl); err != nil {
+	if err = row.Scan(&user.Id, &vpnIp, &config.Service.VpnMask, &config.Service.VpnServerPort, &config.Service.SecretsBackend, &config.Service.SecretsBackendUrl); err != nil {
 		return *config, err
 	}
 	_, vpnIpv4, _ := net.ParseCIDR(vpnIp)

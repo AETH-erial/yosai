@@ -17,7 +17,8 @@ func main() {
 	configServerDb := config.NewSQLiteRepo(db, os.Stdout)
 	configServerDb.Migrate()
 	/*
-		conf := daemon.NewConfigHostImpl("./.config.json").Get()
+		conf := daemon.NewConfiguration(os.Stdout)
+		daemon.NewConfigHostImpl("./.config.json").Propogate(conf)
 		user, err := configServerDb.AddUser(config.ValidateUsername("aeth"))
 		if err != nil {
 			log.Fatal(err.Error(), "failed to add user")

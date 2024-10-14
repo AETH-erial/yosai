@@ -26,7 +26,7 @@ var EnvironmentVariables = []string{
 const DefaultConfigLoc = "./.config.json"
 
 type DaemonConfigIO interface {
-	Get() *Configuration
+	Propogate(*Configuration)
 	Save(Configuration) error
 }
 
@@ -231,15 +231,7 @@ Wrapping the reload config functionality in a router friendly interface
 	:param msg: a message to be parsed from the daemon socket
 */
 func (c *Configuration) ReloadConfigHandler(msg SockMessage) SockMessage {
-	conf := c.cfgIO.Get()
-	b, err := json.Marshal(conf)
-	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-	}
-	err = json.Unmarshal(b, c)
-	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
-	}
+	c.cfgIO.Propogate(c)
 	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration reloaded successfully."))
 }
 
@@ -440,6 +432,20 @@ func (c *Configuration) FreeAddress(addr string) error {
 	return nil
 }
 
+/*
+Get all of the in use addresses for the VPN
+*/
+func (c *Configuration) AllVpnAddresses() []net.IP {
+	addrs := []net.IP{}
+	for i := range c.Service.Servers {
+		addrs = append(addrs, c.Service.Servers[i].VpnIpv4)
+	}
+	for i := range c.Service.Clients {
+		addrs = append(addrs, c.Service.Clients[i].VpnIpv4)
+	}
+	return addrs
+}
+
 type VpnAddressSpaceError struct {
 	Msg string
 }
@@ -474,6 +480,33 @@ func (c *Configuration) SetStreamIO(impl io.Writer) {
 	c.stream = impl
 }
 
+/*
+Calculate the VPN space details
+*/
+func (c *Configuration) CalculateVpnSpace() error {
+
+	mask, _ := c.Service.VpnAddressSpace.Mask.Size()
+	vpnNetwork := fmt.Sprintf("%s/%v", c.Service.VpnAddressSpace.IP.String(), mask)
+	addresses, err := GetNetworkAddresses(vpnNetwork)
+	if err != nil {
+		return err
+	}
+	_, ntwrk, _ := net.ParseCIDR(vpnNetwork)
+	addrSpace := map[string]bool{}
+	for i := range addresses.Ipv4s {
+		addrSpace[addresses.Ipv4s[i].String()] = false
+	}
+	usedAddresses := c.AllVpnAddresses()
+	for i := range usedAddresses {
+		c.Log("Checking: ", usedAddresses[i].String())
+		c.Service.VpnAddresses[usedAddresses[i].String()] = true
+	}
+	c.Service.VpnAddresses = addrSpace
+	c.Service.VpnAddressSpace = *ntwrk
+	c.Service.VpnMask = addresses.Mask
+	return nil
+}
+
 type ConfigurationBuilder struct {
 	fileLocations []string
 }
@@ -498,41 +531,20 @@ func NewConfigHostImpl(path string) ConfigHostImpl {
 	return ConfigHostImpl{path: path}
 }
 
-func (c ConfigHostImpl) Get() *Configuration {
+func (c ConfigHostImpl) Propogate(config *Configuration) {
 	b, err := os.ReadFile(c.path)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	config := &Configuration{
-		stream: os.Stdout,
-		Service: serviceConfig{
-			Clients: map[string]VpnClient{},
-			Servers: map[string]VpnServer{},
-		},
-	}
 	err = json.Unmarshal(b, config)
 	if err != nil {
 		log.Fatal(err)
 	}
-	mask, _ := config.Service.VpnAddressSpace.Mask.Size()
-	vpnNetwork := fmt.Sprintf("%s/%v", config.Service.VpnAddressSpace.IP.String(), mask)
-	addresses, err := GetNetworkAddresses(vpnNetwork)
+	err = config.CalculateVpnSpace()
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	_, ntwrk, _ := net.ParseCIDR(vpnNetwork)
-	if config.Service.VpnAddresses == nil {
-		addrSpace := map[string]bool{}
-		for i := range addresses.Ipv4s {
-			addrSpace[addresses.Ipv4s[i].String()] = false
-		}
-		config.Service.VpnAddresses = addrSpace
-	}
-	config.Service.VpnAddressSpace = *ntwrk
-	config.Service.VpnMask = addresses.Mask
-	return config
 
 }
 
@@ -558,17 +570,19 @@ type ConfigServerImpl struct {
 	proto string
 }
 
-func (s ConfigServerImpl) Get() *Configuration {
+func (s ConfigServerImpl) Propogate(config *Configuration) {
 	resp, err := s.get("/get-config/aeth")
 	if err != nil {
 		log.Fatal(err)
 	}
-	var config Configuration
 	if err = json.Unmarshal(resp, &config); err != nil {
 		log.Fatal(err)
 	}
+	err = config.CalculateVpnSpace()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	return &config
 }
 func (s ConfigServerImpl) Save(config Configuration) error {
 	_, err := s.post(config, "/update-config/aeth")
@@ -641,12 +655,12 @@ func (s ConfigServerImpl) post(body interface{}, path string) ([]byte, error) {
 /*
 Create a new Configuration struct with initialized maps
 */
-func NewConfiguration() *Configuration {
-	return &Configuration{Service: serviceConfig{Servers: map[string]VpnServer{}, Clients: map[string]VpnClient{}}}
+func NewConfiguration(stream io.Writer) *Configuration {
+	return &Configuration{stream: stream, Service: serviceConfig{Servers: map[string]VpnServer{}, Clients: map[string]VpnClient{}, VpnAddresses: map[string]bool{}}}
 }
 
 func BlankConfig(path string) error {
-	config := NewConfiguration()
+	config := NewConfiguration(bytes.NewBuffer([]byte{}))
 	b, err := json.Marshal(config)
 	if err != nil {
 		return err
