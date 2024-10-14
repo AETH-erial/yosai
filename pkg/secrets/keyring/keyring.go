@@ -1,4 +1,4 @@
-package daemon
+package keyring
 
 import (
 	"encoding/base64"
@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/url"
 
+	"git.aetherial.dev/aeth/yosai/pkg/config"
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 )
 
@@ -155,7 +157,7 @@ func (s SshKey) GetType() string {
 type ApiKeyRing struct {
 	Rungs     []DaemonKeyRing
 	Keys      map[string]Key // hashmap with the keys in the keyring. Protected with getters and setters
-	Config    *Configuration
+	Config    *config.Configuration
 	KeyTagger keytags.Keytagger
 }
 
@@ -238,7 +240,7 @@ func (a *ApiKeyRing) Source() string {
 Create a new daemon keyring. Passing additional implementers of the DaemonKeyRing will
 allow the GetKey() method on the toplevel keyring to search all subsequent keyrings for a match.
 */
-func NewKeyRing(cfg *Configuration, keytagger keytags.Keytagger) *ApiKeyRing {
+func NewKeyRing(cfg *config.Configuration, keytagger keytags.Keytagger) *ApiKeyRing {
 	return &ApiKeyRing{
 		Keys:      map[string]Key{},
 		Rungs:     []DaemonKeyRing{},
@@ -268,26 +270,26 @@ Wrapping the show keyring function in a route friendly interface
 
 	:param msg: a message to be decoded from the daemon socket
 */
-func (a *ApiKeyRing) ShowKeyringHandler(msg SockMessage) SockMessage {
+func (a *ApiKeyRing) ShowKeyringHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req KeyringRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	switch req.Name {
 	case "all":
 		b, err := json.Marshal(a.Keys)
 		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+			return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *NewSockMessage(MsgResponse, REQUEST_OK, b)
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 	default:
 		key, err := a.GetKey(req.Name)
 		if err != nil {
-			return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+			return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 		}
 		b, _ := json.Marshal(key)
-		return *NewSockMessage(MsgResponse, REQUEST_OK, b)
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 	}
 }
 
@@ -296,7 +298,7 @@ Wrapping the reload keyring function in a route friendly interface
 
 	:param msg: a message to be decoded from the daemon socket
 */
-func (a *ApiKeyRing) ReloadKeyringHandler(msg SockMessage) SockMessage {
+func (a *ApiKeyRing) ReloadKeyringHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	protectedKeys := a.KeyTagger.ProtectedKeys()
 	keynames := []string{}
 	for keyname := range a.Keys {
@@ -317,7 +319,7 @@ func (a *ApiKeyRing) ReloadKeyringHandler(msg SockMessage) SockMessage {
 			a.Log("Keyring reload error, Error getting key: ", keynames[i], err.Error())
 		}
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully reloaded."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Keyring successfully reloaded."))
 }
 
 /*
@@ -325,12 +327,12 @@ Wrapping the bootstrap keyring function in a route friendly interface
 
 	:param msg: a message to be decoded from the daemon socket
 */
-func (a *ApiKeyRing) BootstrapKeyringHandler(msg SockMessage) SockMessage {
+func (a *ApiKeyRing) BootstrapKeyringHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	err := a.Bootstrap()
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Keyring successfully bootstrapped."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Keyring successfully bootstrapped."))
 }
 
 /*
@@ -350,19 +352,19 @@ func (a *ApiKeyRing) Bootstrap() error {
 }
 
 type KeyringRouter struct {
-	routes map[Method]func(SockMessage) SockMessage
+	routes map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage
 }
 
-func (k *KeyringRouter) Register(method Method, callable func(SockMessage) SockMessage) {
+func (k *KeyringRouter) Register(method daemonproto.Method, callable func(daemonproto.SockMessage) daemonproto.SockMessage) {
 	k.routes[method] = callable
 }
 
-func (k *KeyringRouter) Routes() map[Method]func(SockMessage) SockMessage {
+func (k *KeyringRouter) Routes() map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage {
 	return k.routes
 }
 
 func NewKeyRingRouter() *KeyringRouter {
-	return &KeyringRouter{routes: map[Method]func(SockMessage) SockMessage{}}
+	return &KeyringRouter{routes: map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage{}}
 }
 
 /*

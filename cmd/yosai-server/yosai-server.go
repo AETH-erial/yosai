@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"git.aetherial.dev/aeth/yosai/pkg/config"
+	configserver "git.aetherial.dev/aeth/yosai/pkg/config-server"
 )
 
 func main() {
@@ -14,7 +14,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	configServerDb := config.NewSQLiteRepo(db, os.Stdout)
+	configServerDb := configserver.NewSQLiteRepo(db, os.Stdout)
 	configServerDb.Migrate()
 	/*
 		conf := daemon.NewConfiguration(os.Stdout)
@@ -32,6 +32,6 @@ func main() {
 		}
 		fmt.Printf("%+v\n", dbConf)
 	*/
-	config.RunHttpServer(8080, configServerDb, os.Stdout)
+	configserver.RunHttpServer(8080, configServerDb, os.Stdout)
 
 }

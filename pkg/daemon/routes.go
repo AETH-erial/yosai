@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	wg "git.aetherial.dev/aeth/yosai/pkg/wireguard/centos"
 )
 
@@ -40,8 +41,8 @@ type ConfigRenderRequest struct {
 
 // Client for building internal Daemon route requests
 
-func (c *Context) CreateServer(msg SockMessage) SockMessage {
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server provisioned and indexed into Semaphore."))
+func (c *Context) CreateServer(msg daemonproto.SockMessage) daemonproto.SockMessage {
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Server provisioned and indexed into Semaphore."))
 
 }
 
@@ -86,21 +87,21 @@ wrapping the VPN show configuration function in a route friendly interface
 
 	:param msg: a message to parse from the daemon socket
 */
-func (c *Context) VpnShowHandler(msg SockMessage) SockMessage {
+func (c *Context) VpnShowHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req ConfigRenderRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	seed, err := c.configSeed(req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	cfg, err := wg.RenderClientConfiguration(seed)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, cfg)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, cfg)
 }
 
 /*
@@ -108,40 +109,40 @@ wrapping the VPN save configuration function in a route friendly interface
 
 	:param msg: a message to parse from the daemon socket
 */
-func (c *Context) VpnSaveHandler(msg SockMessage) SockMessage {
+func (c *Context) VpnSaveHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req ConfigRenderRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	seed, err := c.configSeed(req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	cfg, err := wg.RenderClientConfiguration(seed)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	fpath := path.Join(c.Config.HostInfo.WireguardSavePath, req.Server+".conf")
 	err = os.WriteFile(fpath, cfg, 0666)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved to: "+fpath))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Configuration saved to: "+fpath))
 }
 
 type VpnRouter struct {
-	routes map[Method]func(SockMessage) SockMessage
+	routes map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage
 }
 
-func (v *VpnRouter) Register(method Method, callable func(SockMessage) SockMessage) {
+func (v *VpnRouter) Register(method daemonproto.Method, callable func(daemonproto.SockMessage) daemonproto.SockMessage) {
 	v.routes[method] = callable
 }
 
-func (v *VpnRouter) Routes() map[Method]func(SockMessage) SockMessage {
+func (v *VpnRouter) Routes() map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage {
 	return v.routes
 }
 
 func NewVpnRouter() *VpnRouter {
-	return &VpnRouter{routes: map[Method]func(SockMessage) SockMessage{}}
+	return &VpnRouter{routes: map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage{}}
 }

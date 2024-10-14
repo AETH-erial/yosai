@@ -7,8 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	"git.aetherial.dev/aeth/yosai/pkg/config"
 	dclient "git.aetherial.dev/aeth/yosai/pkg/daemonclient"
+	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 )
 
@@ -66,7 +67,7 @@ func main() {
 		switch args[1] {
 		case "show":
 			if len(args) > 2 {
-				b, _ := json.Marshal(daemon.KeyringRequest{Name: args[2]})
+				b, _ := json.Marshal(keyring.KeyringRequest{Name: args[2]})
 				resp := dClient.Call(b, "keyring", "show")
 				rb.Write(resp.Body)
 			} else {
@@ -121,18 +122,18 @@ func main() {
 				}
 				rb.Write([]byte("Server added."))
 			case "delete":
-				b, _ := json.Marshal(daemon.VpnServer{Name: args[3]})
+				b, _ := json.Marshal(config.VpnServer{Name: args[3]})
 				resp := dClient.Call(b, "config-server", "delete")
 				rb.Write(resp.Body)
 			}
 		case "client":
 			switch args[2] {
 			case "add":
-				b, _ := json.Marshal(daemon.VpnClient{Name: args[3]})
+				b, _ := json.Marshal(config.VpnClient{Name: args[3]})
 				resp := dClient.Call(b, "config-peer", "delete")
 				rb.Write(resp.Body)
 			case "delete":
-				b, _ := json.Marshal(daemon.VpnClient{Name: args[3]})
+				b, _ := json.Marshal(config.VpnClient{Name: args[3]})
 				resp := dClient.Call(b, "config-peer", "add")
 				rb.Write(resp.Body)
 			}

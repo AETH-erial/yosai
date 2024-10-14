@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	"git.aetherial.dev/aeth/yosai/pkg/config"
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
+	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,9 +27,9 @@ const YosaiEnvironment = "VPN Server configuration environment variables"
 
 type SemaphoreConnection struct {
 	Client    *http.Client
-	Keyring   daemon.DaemonKeyRing
+	Keyring   keyring.DaemonKeyRing
 	KeyTagger keytags.Keytagger
-	Config    *daemon.Configuration
+	Config    *config.Configuration
 	ServerUrl string
 	HttpProto string
 	ProjectId int
@@ -207,7 +209,7 @@ type InventoryResponse struct {
 
 /*
 ####################################################################
-############ IMPLEMENTING daemon.Key FOR KeyItemResponse ###########
+############ IMPLEMENTING keyring.Key FOR KeyItemResponse ###########
 ####################################################################
 */
 
@@ -241,11 +243,11 @@ type sshKeyAdd struct {
 /*
 Get SSH key by its name
 */
-func (s SemaphoreConnection) GetKey(name string) (daemon.Key, error) {
+func (s SemaphoreConnection) GetKey(name string) (keyring.Key, error) {
 	var key KeyItemResponse
 	keys, err := s.GetAllKeys()
 	if err != nil {
-		return key, daemon.KeyRingError
+		return key, keyring.KeyRingError
 	}
 	for i := range keys {
 		if keys[i].Name == name {
@@ -253,7 +255,7 @@ func (s SemaphoreConnection) GetKey(name string) (daemon.Key, error) {
 		}
 	}
 
-	return key, daemon.KeyNotFound
+	return key, keyring.KeyNotFound
 
 }
 
@@ -261,10 +263,10 @@ func (s SemaphoreConnection) GetKey(name string) (daemon.Key, error) {
 Add SSH Key to a project
 
 	:param name: the name to assign the key in the project
-	:param keyring: a daemon.DaemonKeyRing implementer that can return the API key for Semaphore
-	:param key: a daemon.Key implementer wrapping the SSH key
+	:param keyring: a keyring.DaemonKeyRing implementer that can return the API key for Semaphore
+	:param key: a keyring.Key implementer wrapping the SSH key
 */
-func (s SemaphoreConnection) AddKey(name string, key daemon.Key) error {
+func (s SemaphoreConnection) AddKey(name string, key keyring.Key) error {
 	_, err := s.GetKeyId(name)
 	if err == nil { // return if the key exists
 		return nil
@@ -291,7 +293,7 @@ func (s SemaphoreConnection) Source() string {
 }
 
 // NewKeyRequest builder function
-func (s SemaphoreConnection) NewKeyRequestBuilder(name string, key daemon.Key) daemon.Key {
+func (s SemaphoreConnection) NewKeyRequestBuilder(name string, key keyring.Key) keyring.Key {
 	if key.GetType() == "ssh" {
 		return AddKeyRequest{
 			Name:      name,
@@ -321,9 +323,9 @@ Create a new semaphore client
 	    :param url: the base url of the semaphore server, without the HTTP/S prefix
 		:param proto: either HTTP or HTTPS, depending on the server's SSL setup
 		:param log: an io.Writer to write logfile to
-		:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
+		:param keyring: a keyring.DaemonKeyRing implementer to get the Semaphore API key from
 */
-func NewSemaphoreClient(url string, proto string, keyring daemon.DaemonKeyRing, conf *daemon.Configuration, keytagger keytags.Keytagger) SemaphoreConnection {
+func NewSemaphoreClient(url string, proto string, keyring keyring.DaemonKeyRing, conf *config.Configuration, keytagger keytags.Keytagger) SemaphoreConnection {
 	client := &http.Client{}
 	semaphoreBootstrap := SemaphoreConnection{Client: client, ServerUrl: url, HttpProto: proto, Keyring: keyring, KeyTagger: keytagger, Config: conf}
 	semaphoreBootstrap.Log("Using mode ", proto)
@@ -379,7 +381,7 @@ func (s *SemaphoreConnection) Log(msg ...string) {
 Create a new 'Project' in Semaphore
 
 	:param name: the name to assign the project
-	:param keyring: a daemon.DaemonKeyRing implementer to get the Semaphore API key from
+	:param keyring: a keyring.DaemonKeyRing implementer to get the Semaphore API key from
 */
 func (s SemaphoreConnection) NewProject(name string) error {
 	_, err := s.GetProjectByName(name)
@@ -546,7 +548,7 @@ func (s SemaphoreConnection) Delete(path string) ([]byte, error) {
 /*
 Retrieve the projects in Semaphore
 
-	:param keyring: a daemon.DaemonKeyRing implementer to get the API key from for Semaphore
+	:param keyring: a keyring.DaemonKeyRing implementer to get the API key from for Semaphore
 */
 func (s SemaphoreConnection) GetProjects() ([]ProjectsResponse, error) {
 	var projectsResp []ProjectsResponse
@@ -824,7 +826,7 @@ func (s SemaphoreConnection) RemoveHostFromInv(name string, host ...string) erro
 /*
 Add hosts to inventory
 */
-func (s SemaphoreConnection) AddHostToInv(name string, host ...daemon.VpnServer) error {
+func (s SemaphoreConnection) AddHostToInv(name string, host ...config.VpnServer) error {
 
 	resp, err := s.GetInventoryByName(name)
 	if err != nil {
@@ -1056,70 +1058,70 @@ type SemaphoreRequest struct {
 /*
 Wrapping the functioanlity of the keyring bootstrapper for top level cleanliness
 */
-func (s SemaphoreConnection) keyBootstrapper() daemon.SockMessage {
+func (s SemaphoreConnection) keyBootstrapper() daemonproto.SockMessage {
 	reqKeys := s.KeyTagger.GetAnsibleKeys()
 	for i := range reqKeys {
 		kn := reqKeys[i]
 		key, err := s.Keyring.GetKey(kn)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+			return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 		}
 		err = s.AddKey(kn, s.NewKeyRequestBuilder(kn, key))
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+			return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 		}
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Daemon keyring successfuly bootstrapped."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Daemon keyring successfuly bootstrapped."))
 }
 
 /*
 Wrapping the functionality of the Project bootstrapper for top level cleanliness
 */
-func (s SemaphoreConnection) projectBootstrapper() daemon.SockMessage {
+func (s SemaphoreConnection) projectBootstrapper() daemonproto.SockMessage {
 	s.Config.Log("Entered Semaphore bootstrapping ...")
 	err := s.NewProject(YosaiProject)
 	if err != nil {
 		s.Config.Log("Error creating the project: ", err.Error())
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddRepository(s.Config.Ansible.Repo, s.Config.Ansible.Branch)
 	if err != nil {
 		s.Config.Log("Error creating the repository: ", err.Error())
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	hashiKey, err := s.Keyring.GetKey(s.KeyTagger.HashicorpVaultKeyname())
 	if err != nil {
 		s.Config.Log("Error getting the hashicorp keyring from the keyring: ", err.Error())
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddEnvironment(EnvironmentVariables{SecretsProviderUrl: s.Config.Service.SecretsBackendUrl, SecretsProviderApiKey: hashiKey.GetSecret()})
 	if err != nil {
 		s.Config.Log("Error creating the environment: ", err.Error())
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.AddJobTemplate(s.Config.Ansible.PlaybookName, fmt.Sprintf("%s:%s", s.Config.Ansible.Repo, s.Config.Ansible.Branch))
 	if err != nil {
 		s.Config.Log("Error creating the job template: ", err.Error())
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Project successfuly bootstrapped."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Project successfuly bootstrapped."))
 
 }
 
 /*
 Wrapping the inventory bootstrap functionality for top level cleanliness
 */
-func (s SemaphoreConnection) inventoryBootstrapper() daemon.SockMessage {
+func (s SemaphoreConnection) inventoryBootstrapper() daemonproto.SockMessage {
 	err := s.AddInventory(YosaiServerInventory)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Inventory successfuly bootstrapped."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Inventory successfuly bootstrapped."))
 
 }
 
-func (s SemaphoreConnection) BootstrapHandler(msg daemon.SockMessage) daemon.SockMessage {
-	bootstrapFuncs := []func() daemon.SockMessage{
+func (s SemaphoreConnection) BootstrapHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
+	bootstrapFuncs := []func() daemonproto.SockMessage{
 		s.keyBootstrapper,
 		s.inventoryBootstrapper,
 		s.projectBootstrapper,
@@ -1128,14 +1130,14 @@ func (s SemaphoreConnection) BootstrapHandler(msg daemon.SockMessage) daemon.Soc
 	for i := range bootstrapFuncs {
 		call := bootstrapFuncs[i]
 		resp := call()
-		if resp.StatusCode != daemon.REQUEST_OK {
+		if resp.StatusCode != daemonproto.REQUEST_OK {
 			s.Log("Error bootstrapping components: ", resp.Target, string(resp.Body))
 			continue
 		}
 		successMsg = successMsg + resp.StatusMsg + "\n"
 
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte(successMsg))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte(successMsg))
 
 }
 
@@ -1144,17 +1146,17 @@ Wrapping the add project function in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) AddProjectHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) AddProjectHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	err = s.NewProject(req.Target)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Project: "+req.Target+" successfully added."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Project: "+req.Target+" successfully added."))
 }
 
 /*
@@ -1162,16 +1164,16 @@ Wrapping the show project function in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) ShowProjectHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) ShowProjectHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	proj, err := s.GetProjects()
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	b, err := json.MarshalIndent(proj, " ", "    ")
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 }
 
 /*
@@ -1179,21 +1181,21 @@ Wrapping the run task function in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) RunTaskHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) RunTaskHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	resp, err := s.StartJob(req.Target)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	b, err := json.MarshalIndent(resp, " ", "    ")
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 }
 
 /*
@@ -1201,25 +1203,25 @@ Wrapping the show task function in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) ShowTaskHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) ShowTaskHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	taskid, err := strconv.Atoi(req.Target)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	taskout, err := s.GetTaskOutput(taskid)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	b, err := json.MarshalIndent(taskout, " ", "    ")
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 }
 
 /*
@@ -1227,21 +1229,21 @@ Wrapping the poll task function in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) PollTaskHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) PollTaskHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	taskId, err := strconv.Atoi(req.Target)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_TIMEOUT, []byte(err.Error()))
 	}
 	err = s.PollTask(taskId, 60)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_TIMEOUT, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Task: "+req.Target+" completed."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Task: "+req.Target+" completed."))
 }
 
 /*
@@ -1249,17 +1251,17 @@ Wrapping the show hosts functions in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) ShowHostHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) ShowHostHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 
 	inv, err := s.GetAllInventories()
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	b, err := json.Marshal(inv)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 }
 
 /*
@@ -1267,19 +1269,19 @@ Wrapping the delete host function in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) DeleteHostHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) DeleteHostHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	hosts := strings.Split(strings.Trim(req.Target, ","), ",")
 	err = s.RemoveHostFromInv(YosaiServerInventory, hosts...)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
+	return *daemonproto.NewSockMessage(daemonproto.MsgRequest, daemonproto.REQUEST_OK, []byte(fmt.Sprintf("Host: %v removed from the inventory", hosts)))
 }
 
 /*
@@ -1287,43 +1289,43 @@ Wrapping the add host function in a route friendly interface
 
 	:param msg: a message to parse that was recieved from the daemon socket
 */
-func (s SemaphoreConnection) AddHostHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (s SemaphoreConnection) AddHostHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req SemaphoreRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 
 	hosts := strings.Split(strings.Trim(req.Target, ","), ",")
-	vpnHosts := []daemon.VpnServer{}
+	vpnHosts := []config.VpnServer{}
 	for i := range hosts {
 		server, err := s.Config.GetServer(hosts[i])
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+			return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 		}
 		vpnHosts = append(vpnHosts, server)
 	}
 	err = s.AddHostToInv(YosaiServerInventory, vpnHosts...)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgRequest, daemon.REQUEST_OK, []byte(fmt.Sprintf("Host: %v added to the inventory", hosts)))
+	return *daemonproto.NewSockMessage(daemonproto.MsgRequest, daemonproto.REQUEST_OK, []byte(fmt.Sprintf("Host: %v added to the inventory", hosts)))
 }
 
 type SemaphoreRouter struct {
-	routes map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage
+	routes map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage
 }
 
-func (s *SemaphoreRouter) Register(method daemon.Method, callable func(daemon.SockMessage) daemon.SockMessage) {
+func (s *SemaphoreRouter) Register(method daemonproto.Method, callable func(daemonproto.SockMessage) daemonproto.SockMessage) {
 	s.routes[method] = callable
 }
 
-func (s *SemaphoreRouter) Routes() map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage {
+func (s *SemaphoreRouter) Routes() map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage {
 	return s.routes
 }
 
 func NewSemaphoreRouter() *SemaphoreRouter {
-	return &SemaphoreRouter{routes: map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage{}}
+	return &SemaphoreRouter{routes: map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage{}}
 }
 
 /*
@@ -1362,7 +1364,7 @@ YAML inventory builder function
 
 	:param hosts: a list of host IP addresses to add to the VPN server inventory
 */
-func (s SemaphoreConnection) YamlInventoryBuilder(hosts []daemon.VpnServer) YamlInventory {
+func (s SemaphoreConnection) YamlInventoryBuilder(hosts []config.VpnServer) YamlInventory {
 
 	hostmap := map[string]yamlVars{}
 	clientmap := map[string]yamlVpnClient{}

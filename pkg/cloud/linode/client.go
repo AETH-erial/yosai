@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	"git.aetherial.dev/aeth/yosai/pkg/config"
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
+	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
 )
 
 const LinodeApiUrl = "api.linode.com"
@@ -75,9 +77,9 @@ type NewLinodeBody struct {
 
 type LinodeConnection struct {
 	Client    *http.Client
-	Keyring   daemon.DaemonKeyRing
+	Keyring   keyring.DaemonKeyRing
 	KeyTagger keytags.Keytagger
-	Config    *daemon.Configuration
+	Config    *config.Configuration
 }
 
 // Logging wrapper
@@ -88,7 +90,7 @@ func (ln LinodeConnection) Log(msg ...string) {
 }
 
 // Construct a NewLinodeBody struct for a CreateNewLinode call
-func NewLinodeBodyBuilder(image string, region string, linodeType string, label string, keyring daemon.DaemonKeyRing) (NewLinodeBody, error) {
+func NewLinodeBodyBuilder(image string, region string, linodeType string, label string, keyring keyring.DaemonKeyRing) (NewLinodeBody, error) {
 	var newLnBody NewLinodeBody
 	rootPass, err := keyring.GetKey(keytags.VPS_ROOT_PASS_KEYNAME)
 	if err != nil {
@@ -111,7 +113,7 @@ func NewLinodeBodyBuilder(image string, region string, linodeType string, label 
 /*
 Get all regions that a server can be deployed in from Linode
 
-	:param keyring: a daemon.DaemonKeyRing implementer that is able to return a linode API key
+	:param keyring: a keyring.DaemonKeyRing implementer that is able to return a linode API key
 */
 func (ln LinodeConnection) GetRegions() (RegionsResponse, error) {
 	var regions RegionsResponse
@@ -130,7 +132,7 @@ func (ln LinodeConnection) GetRegions() (RegionsResponse, error) {
 /*
 Get all of the available image types from linode
 
-	:param keyring: a daemon.DaemonKeyRing interface implementer. Responsible for getting the linode API key
+	:param keyring: a keyring.DaemonKeyRing interface implementer. Responsible for getting the linode API key
 */
 func (ln LinodeConnection) GetImages() (ImagesResponse, error) {
 	var imgResp ImagesResponse
@@ -150,7 +152,7 @@ func (ln LinodeConnection) GetImages() (ImagesResponse, error) {
 /*
 Get all of the available Linode types from linode
 
-	:param keyring: a daemon.DaemonKeyRing interface implementer. Responsible for getting the linode API key
+	:param keyring: a keyring.DaemonKeyRing interface implementer. Responsible for getting the linode API key
 */
 func (ln LinodeConnection) GetTypes() (TypesResponse, error) {
 	var typesResp TypesResponse
@@ -186,7 +188,7 @@ func (ln LinodeConnection) GetLinode(id string) (GetLinodeResponse, error) {
 /*
 List all linodes on your account
 
-	:param keyring: a daemon.DaemonKeyRing implementer that can return the linode API key
+	:param keyring: a keyring.DaemonKeyRing implementer that can return the linode API key
 */
 func (ln LinodeConnection) ListLinodes() (GetAllLinodes, error) {
 	var allLinodes GetAllLinodes
@@ -244,7 +246,7 @@ func (ln LinodeConnection) GetByName(name string) (GetLinodeResponse, error) {
 /*
 Create a new linode instance
 
-	    :param keyring: a daemon.DaemonKeyRing implementer that can return a linode API key
+	    :param keyring: a keyring.DaemonKeyRing implementer that can return a linode API key
 		:param body: the request body for the new linode request
 */
 func (ln LinodeConnection) CreateNewLinode(body NewLinodeBody) (GetLinodeResponse, error) {
@@ -300,7 +302,7 @@ func (ln LinodeConnection) DeleteLinode(id string) error {
 /*
 Agnostic GET method for calling the upstream linode server
 
-	:param keyring: a daemon.DaemonKeyRing implementer to get the linode API key from
+	:param keyring: a keyring.DaemonKeyRing implementer to get the linode API key from
 	:param path: the path to GET, added into the base API url
 */
 func (ln LinodeConnection) Get(path string) ([]byte, error) {
@@ -330,7 +332,7 @@ func (ln LinodeConnection) Get(path string) ([]byte, error) {
 /*
 Agnostic DELETE method for deleting a resource from Linode
 
-	:param keyring: a daemon.DaemonKeyRing implementer for getting the linode API key
+	:param keyring: a keyring.DaemonKeyRing implementer for getting the linode API key
 	:param path: the path to perform the DELETE method on
 */
 func (ln LinodeConnection) Delete(path string) ([]byte, error) {
@@ -413,38 +415,38 @@ type PollLinodeRequest struct {
 	Address string `json:"address"`
 }
 
-func (ln LinodeConnection) DeleteLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (ln LinodeConnection) DeleteLinodeHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req DeleteLinodeRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 
 	resp, err := ln.GetByName(req.Name)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 
 	err = ln.DeleteLinode(fmt.Sprint(resp.Id))
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_ACCEPTED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_ACCEPTED, []byte(err.Error()))
 	}
 	responseMessage := []byte("Server: " + fmt.Sprint(resp.Id) + " was deleted.")
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, responseMessage)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, responseMessage)
 
 }
 
 /*
 Wraps the creation of a linode to make the LinodeRouter function slimmer
 
-	:param msg: a daemon.SockMessage struct with request info
+	:param msg: a daemonproto.SockMessage struct with request info
 */
-func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (ln LinodeConnection) AddLinodeHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	ln.Log("Recieved request to create a new linode server.")
 	var payload AddLinodeRequest
 	err := json.Unmarshal(msg.Body, &payload)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	newLinodeReq, err := NewLinodeBodyBuilder(payload.Image,
 		payload.Region,
@@ -452,69 +454,69 @@ func (ln LinodeConnection) AddLinodeHandler(msg daemon.SockMessage) daemon.SockM
 		payload.Name,
 		ln.Keyring)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	resp, err := ln.CreateNewLinode(newLinodeReq)
 	if err != nil {
 		ln.Log("There was an error creating server: ", payload.Name, err.Error())
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	ln.Log("Server: ", payload.Name, " Created successfully.")
 
 	b, _ := json.Marshal(resp)
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 
 }
 
 /*
 Wraps the polling feature of the client in a Handler function
 
-	:param msg: a daemon.SockMessage that contains the request info
+	:param msg: a daemonproto.SockMessage that contains the request info
 */
-func (ln LinodeConnection) PollLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (ln LinodeConnection) PollLinodeHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req PollLinodeRequest
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_TIMEOUT, []byte(err.Error()))
 	}
 
 	err = ln.ServerPoll(req.Address, 60)
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_TIMEOUT, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_TIMEOUT, []byte(err.Error()))
 	}
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Server is running."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Server is running."))
 
 }
 
 /*
 Wraps the show servers functionality in a the correct Route interface
 
-	:param msg: a daemon.SockMessage that contains a request
+	:param msg: a daemonproto.SockMessage that contains a request
 */
-func (ln LinodeConnection) ShowLinodeHandler(msg daemon.SockMessage) daemon.SockMessage {
+func (ln LinodeConnection) ShowLinodeHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	servers, err := ln.ListLinodes()
 	if err != nil {
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	b, _ := json.Marshal(servers)
-	return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, b)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 
 }
 
 type LinodeRouter struct {
-	routes map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage
+	routes map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage
 }
 
-func (l *LinodeRouter) Register(method daemon.Method, callable func(daemon.SockMessage) daemon.SockMessage) {
+func (l *LinodeRouter) Register(method daemonproto.Method, callable func(daemonproto.SockMessage) daemonproto.SockMessage) {
 	l.routes[method] = callable
 }
 
-func (l *LinodeRouter) Routes() map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage {
+func (l *LinodeRouter) Routes() map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage {
 	return l.routes
 }
 
 func NewLinodeRouter() *LinodeRouter {
-	return &LinodeRouter{routes: map[daemon.Method]func(daemon.SockMessage) daemon.SockMessage{}}
+	return &LinodeRouter{routes: map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage{}}
 }
 
 /*

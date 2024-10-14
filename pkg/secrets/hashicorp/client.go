@@ -8,8 +8,9 @@ import (
 	"io"
 	"net/http"
 
-	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
+	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
 )
 
 const (
@@ -38,7 +39,7 @@ type VaultItem struct {
 type VaultConnection struct {
 	VaultUrl  string
 	HttpProto string
-	KeyRing   daemon.DaemonKeyRing
+	KeyRing   keyring.DaemonKeyRing
 	Client    *http.Client
 }
 
@@ -86,7 +87,7 @@ Retrieve a key from hashicorp. the 2nd argument, 'name' is the path of the secre
 	:param name: the name of the secret in hashicorp. It will be injected as the 'path' in the API call,
 	See the Hashicorp Vault documentation for details
 */
-func (v VaultConnection) GetKey(name string) (daemon.Key, error) {
+func (v VaultConnection) GetKey(name string) (keyring.Key, error) {
 	vaultBase := fmt.Sprintf("%s://%s/%s/%s", v.HttpProto, v.VaultUrl, SecretsApiPath, name)
 	var vaultResp VaultResponse
 	req, err := http.NewRequest("GET", vaultBase, nil)
@@ -105,7 +106,7 @@ func (v VaultConnection) GetKey(name string) (daemon.Key, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return vaultResp, daemon.KeyNotFound
+		return vaultResp, keyring.KeyNotFound
 	}
 
 	b, err := io.ReadAll(resp.Body)
@@ -124,7 +125,7 @@ Add the root users for your VPS to Hashicorp vault
 
 	:param pass: the password to store in vault
 */
-func (v VaultConnection) AddKey(name string, key daemon.Key) error {
+func (v VaultConnection) AddKey(name string, key keyring.Key) error {
 	body := VaultAdd{
 		Data: map[string]string{"public": key.GetPublic(), "secret": key.GetSecret(), "type": key.GetType()},
 	}
@@ -195,21 +196,21 @@ Handles the routing for the hashicorp keyring routes
 
 	:param msg: a daemon.SockMessage that contains request data
 */
-func (v VaultConnection) VaultRouter(msg daemon.SockMessage) daemon.SockMessage {
+func (v VaultConnection) VaultRouter(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	switch msg.Method {
 	case "add":
 		var req VaultItem
 		err := json.Unmarshal(msg.Body, &req)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+			return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 		}
 		err = v.AddKey(req.Name, req)
 		if err != nil {
-			return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_FAILED, []byte(err.Error()))
+			return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 		}
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_OK, []byte("Key successfully added."))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Key successfully added."))
 	default:
-		return *daemon.NewSockMessage(daemon.MsgResponse, daemon.REQUEST_UNRESOLVED, []byte("Unresolvable method"))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_UNRESOLVED, []byte("Unresolvable method"))
 
 	}
 }

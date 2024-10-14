@@ -1,4 +1,4 @@
-package daemon
+package config
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"github.com/joho/godotenv"
 )
 
@@ -116,144 +117,156 @@ func BlankEnv(path string) error {
 /*
 Wrapping the add peer functionality in a router friendly interface
 
-	:param msg: a message to be parsed from the daemon socket
+	:param msg: a message to be parsed from the daemonproto socket
 */
-func (c *Configuration) AddPeerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) AddPeerHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var peer VpnClient
 	err := json.Unmarshal(msg.Body, &peer)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	addr, err := c.GetAvailableVpnIpv4()
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+c.AddClient(addr, peer.Pubkey, peer.Name)+" Successfully added."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Client: "+c.AddClient(addr, peer.Pubkey, peer.Name)+" Successfully added."))
 }
 
 /*
 Wrapping the delete peer functionality in a router friendly interface
 
-	:param msg: a message to be parsed from the daemon socket
+	:param msg: a message to be parsed from the daemonproto socket
 */
-func (c *Configuration) DeletePeerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) DeletePeerHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req VpnClient
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	peer, err := c.GetClient(req.Name)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 
 	delete(c.Service.Clients, peer.Name)
 	err = c.FreeAddress(peer.VpnIpv4.String())
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Client: "+peer.Name+" Successfully deleted from the config."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Client: "+peer.Name+" Successfully deleted from the config."))
 }
 
 /*
 Wrapping the add server functionality in a router friendly interface
 
-	:param msg: a message to be parsed from the daemon socket
+	:param msg: a message to be parsed from the daemonproto socket
 */
-func (c *Configuration) AddServerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) AddServerHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req VpnServer
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	addr, err := c.GetAvailableVpnIpv4()
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	name := c.AddServer(addr, req.Name, req.WanIpv4, req.Port)
 	c.Log("address: ", addr.String(), "name:", name)
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+name+" Successfully added."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Server: "+name+" Successfully added."))
 }
 
 /*
 Wrapping the delete server functionality in a router friendly interface
 
-	:param msg: a message to be parsed from the daemon socket
+	:param msg: a message to be parsed from the daemonproto socket
 */
-func (c *Configuration) DeleteServerHandler(msg SockMessage) SockMessage {
+func (c *Configuration) DeleteServerHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	var req VpnServer
 	err := json.Unmarshal(msg.Body, &req)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 	server, err := c.GetServer(req.Name)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
 
 	delete(c.Service.Servers, server.Name)
 	err = c.FreeAddress(server.VpnIpv4.String())
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Server: "+server.Name+" Successfully deleted from the config."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Server: "+server.Name+" Successfully deleted from the config."))
 }
 
 /*
 Wrapping the show config functionality in a router friendly interface
 
-	:param msg: a message to be parsed from the daemon socket
+	:param msg: a message to be parsed from the daemonproto socket
 */
-func (c *Configuration) ShowConfigHandler(msg SockMessage) SockMessage {
+func (c *Configuration) ShowConfigHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	b, err := json.MarshalIndent(&c, "", "   ")
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, b)
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, b)
 }
 
 /*
 Wrapping the save config functionality in a router friendly interface
 
-	:param msg: a message to be parsed from the daemon socket
+	:param msg: a message to be parsed from the daemonproto socket
 */
-func (c *Configuration) SaveConfigHandler(msg SockMessage) SockMessage {
+func (c *Configuration) SaveConfigHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	err := c.cfgIO.Save(*c)
 	if err != nil {
-		return *NewSockMessage(MsgResponse, REQUEST_FAILED, []byte(err.Error()))
+		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration saved successfully."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Configuration saved successfully."))
 }
 
 /*
 Wrapping the reload config functionality in a router friendly interface
 
-	:param msg: a message to be parsed from the daemon socket
+	:param msg: a message to be parsed from the daemonproto socket
 */
-func (c *Configuration) ReloadConfigHandler(msg SockMessage) SockMessage {
+func (c *Configuration) ReloadConfigHandler(msg daemonproto.SockMessage) daemonproto.SockMessage {
 	c.cfgIO.Propogate(c)
-	return *NewSockMessage(MsgResponse, REQUEST_OK, []byte("Configuration reloaded successfully."))
+	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Configuration reloaded successfully."))
 }
 
 type ConfigRouter struct {
-	routes map[Method]func(SockMessage) SockMessage
+	routes map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage
 }
 
-func (c *ConfigRouter) Register(method Method, callable func(SockMessage) SockMessage) {
+func (c *ConfigRouter) Register(method daemonproto.Method, callable func(daemonproto.SockMessage) daemonproto.SockMessage) {
 	c.routes[method] = callable
 }
 
-func (c *ConfigRouter) Routes() map[Method]func(SockMessage) SockMessage {
+func (c *ConfigRouter) Routes() map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage {
 	return c.routes
 }
 
 func NewConfigRouter() *ConfigRouter {
-	return &ConfigRouter{routes: map[Method]func(SockMessage) SockMessage{}}
+	return &ConfigRouter{routes: map[daemonproto.Method]func(daemonproto.SockMessage) daemonproto.SockMessage{}}
+}
+
+type Username string
+
+func ValidateUsername(name string) Username {
+	return Username(name)
+}
+
+type User struct {
+	Name Username
+	Id   int
 }
 
 type Configuration struct {
 	stream   io.Writer
 	cfgIO    DaemonConfigIO
+	Username Username      `json:"username"`
 	Cloud    cloudConfig   `json:"cloud"`
 	Ansible  ansibleConfig `json:"ansible"`
 	Service  serviceConfig `json:"service"`
@@ -571,7 +584,7 @@ type ConfigServerImpl struct {
 }
 
 func (s ConfigServerImpl) Propogate(config *Configuration) {
-	resp, err := s.get("/get-config/aeth")
+	resp, err := s.get("/get-config/" + string(config.Username))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -585,7 +598,7 @@ func (s ConfigServerImpl) Propogate(config *Configuration) {
 
 }
 func (s ConfigServerImpl) Save(config Configuration) error {
-	_, err := s.post(config, "/update-config/aeth")
+	_, err := s.post(config, "/update-config/"+string(config.Username))
 	if err != nil {
 		return err
 	}
@@ -655,12 +668,12 @@ func (s ConfigServerImpl) post(body interface{}, path string) ([]byte, error) {
 /*
 Create a new Configuration struct with initialized maps
 */
-func NewConfiguration(stream io.Writer) *Configuration {
-	return &Configuration{stream: stream, Service: serviceConfig{Servers: map[string]VpnServer{}, Clients: map[string]VpnClient{}, VpnAddresses: map[string]bool{}}}
+func NewConfiguration(stream io.Writer, username Username) *Configuration {
+	return &Configuration{Username: username, stream: stream, Service: serviceConfig{Servers: map[string]VpnServer{}, Clients: map[string]VpnClient{}, VpnAddresses: map[string]bool{}}}
 }
 
 func BlankConfig(path string) error {
-	config := NewConfiguration(bytes.NewBuffer([]byte{}))
+	config := NewConfiguration(bytes.NewBuffer([]byte{}), "replace_me")
 	b, err := json.Marshal(config)
 	if err != nil {
 		return err

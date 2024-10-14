@@ -1,4 +1,4 @@
-package config
+package configserver
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"log"
 	"net/http"
 
-	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	"git.aetherial.dev/aeth/yosai/pkg/config"
 )
 
 const UserQueryParam = "username"
@@ -57,7 +57,7 @@ func (e *ExecutionHandler) GetUserConfiguration(w http.ResponseWriter, req *http
 		return
 	}
 	e.Log("Called from: ", user)
-	config, err := e.DbHook.GetConfigByUser(ValidateUsername(user))
+	config, err := e.DbHook.GetConfigByUser(config.ValidateUsername(user))
 	if err != nil {
 		e.Log(err.Error())
 		w.WriteHeader(http.StatusNotFound)
@@ -105,13 +105,13 @@ func (e *ExecutionHandler) UpdateUserConfiguration(w http.ResponseWriter, req *h
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	var config daemon.Configuration
-	if err = json.Unmarshal(body, &config); err != nil {
+	var cfg config.Configuration
+	if err = json.Unmarshal(body, &cfg); err != nil {
 		e.Log(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if err = e.DbHook.UpdateUser(ValidateUsername(user), config); err != nil {
+	if err = e.DbHook.UpdateUser(config.ValidateUsername(user), cfg); err != nil {
 		e.Log(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return

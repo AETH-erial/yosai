@@ -8,20 +8,23 @@ import (
 	"os"
 
 	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
+	"git.aetherial.dev/aeth/yosai/pkg/config"
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
+	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 )
 
 const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
 
 func main() {
-	config := flag.Bool("config-init", false, "pass this to create a blank config at ./.config.tmpl")
+	configInit := flag.Bool("config-init", false, "pass this to create a blank config at ./.config.tmpl")
 	envInit := flag.Bool("env-init", false, "pass this to create a blank env file at ./.env.tmpl")
 	flag.Parse()
-	if *config {
-		err := daemon.BlankConfig("./.config.tmpl")
+	if *configInit {
+		err := config.BlankConfig("./.config.tmpl")
 		if err != nil {
 			log.Fatal("Couldnt create blank config: ", err)
 
@@ -30,27 +33,27 @@ func main() {
 		os.Exit(0)
 	}
 	if *envInit {
-		err := daemon.BlankEnv("./.env.tmpl")
+		err := config.BlankEnv("./.env.tmpl")
 		if err != nil {
 			log.Fatal("Couldnt create blank env file: ", err)
 		}
 		fmt.Println("Blank env file created at ./.env.tmpl")
 		os.Exit(0)
 	}
-	err := daemon.LoadAndVerifyEnv("./.env", daemon.EnvironmentVariables)
+	err := config.LoadAndVerifyEnv("./.env", config.EnvironmentVariables)
 	if err != nil {
 		log.Fatal("Error loading env file: ", err)
 	}
-	configServer := daemon.NewConfigServerImpl("localhost:8080", "http")
-	conf := daemon.NewConfiguration(os.Stdout)
+	configServer := config.NewConfigServerImpl("localhost:8080", "http")
+	conf := config.NewConfiguration(os.Stdout, "aeth")
 	configServer.Propogate(conf)
 	fmt.Printf("config gotten: %+v\n", conf)
 	conf.SetConfigIO(configServer)
 	conf.SetStreamIO(os.Stdout)
-	apikeyring := daemon.NewKeyRing(conf, keytags.ConstKeytag{})
+	apikeyring := keyring.NewKeyRing(conf, keytags.ConstKeytag{})
 	// Here we are demonstrating how you add a key to a keyring, in this
 	// case it is the top level keyring.
-	apikeyring.AddKey(keytags.HASHICORP_VAULT_KEYNAME, daemon.BearerAuth{
+	apikeyring.AddKey(keytags.HASHICORP_VAULT_KEYNAME, keyring.BearerAuth{
 		Secret: os.Getenv(keytags.HASHICORP_VAULT_KEYNAME),
 	})
 	hashiConn := hashicorp.VaultConnection{
@@ -74,52 +77,52 @@ func main() {
 	ctx := daemon.NewContext(UNIX_DOMAIN_SOCK_PATH, os.Stdout, apikeyring, conf)
 
 	lnRouter := linode.NewLinodeRouter()
-	lnRouter.Register(daemon.ADD, lnConn.AddLinodeHandler)
-	lnRouter.Register(daemon.SHOW, lnConn.ShowLinodeHandler)
-	lnRouter.Register(daemon.DELETE, lnConn.DeleteLinodeHandler)
-	lnRouter.Register(daemon.POLL, lnConn.PollLinodeHandler)
+	lnRouter.Register(daemonproto.ADD, lnConn.AddLinodeHandler)
+	lnRouter.Register(daemonproto.SHOW, lnConn.ShowLinodeHandler)
+	lnRouter.Register(daemonproto.DELETE, lnConn.DeleteLinodeHandler)
+	lnRouter.Register(daemonproto.POLL, lnConn.PollLinodeHandler)
 
 	semHostsRouter := semaphore.NewSemaphoreRouter()
-	semHostsRouter.Register(daemon.ADD, semaphoreConn.AddHostHandler)
-	semHostsRouter.Register(daemon.DELETE, semaphoreConn.DeleteHostHandler)
-	semHostsRouter.Register(daemon.SHOW, semaphoreConn.ShowHostHandler)
+	semHostsRouter.Register(daemonproto.ADD, semaphoreConn.AddHostHandler)
+	semHostsRouter.Register(daemonproto.DELETE, semaphoreConn.DeleteHostHandler)
+	semHostsRouter.Register(daemonproto.SHOW, semaphoreConn.ShowHostHandler)
 
 	semProjRouter := semaphore.NewSemaphoreRouter()
-	semProjRouter.Register(daemon.ADD, semaphoreConn.AddProjectHandler)
-	semProjRouter.Register(daemon.SHOW, semaphoreConn.ShowProjectHandler)
+	semProjRouter.Register(daemonproto.ADD, semaphoreConn.AddProjectHandler)
+	semProjRouter.Register(daemonproto.SHOW, semaphoreConn.ShowProjectHandler)
 
 	semTaskRouter := semaphore.NewSemaphoreRouter()
-	semTaskRouter.Register(daemon.RUN, semaphoreConn.RunTaskHandler)
-	semTaskRouter.Register(daemon.POLL, semaphoreConn.PollTaskHandler)
-	semTaskRouter.Register(daemon.SHOW, semaphoreConn.ShowTaskHandler)
+	semTaskRouter.Register(daemonproto.RUN, semaphoreConn.RunTaskHandler)
+	semTaskRouter.Register(daemonproto.POLL, semaphoreConn.PollTaskHandler)
+	semTaskRouter.Register(daemonproto.SHOW, semaphoreConn.ShowTaskHandler)
 
 	semBootstrapRouter := semaphore.NewSemaphoreRouter()
-	semBootstrapRouter.Register(daemon.BOOTSTRAP, semaphoreConn.BootstrapHandler)
+	semBootstrapRouter.Register(daemonproto.BOOTSTRAP, semaphoreConn.BootstrapHandler)
 
-	configPeerRouter := daemon.NewConfigRouter()
-	configPeerRouter.Register(daemon.ADD, conf.AddPeerHandler)
-	configPeerRouter.Register(daemon.DELETE, conf.DeletePeerHandler)
+	configPeerRouter := config.NewConfigRouter()
+	configPeerRouter.Register(daemonproto.ADD, conf.AddPeerHandler)
+	configPeerRouter.Register(daemonproto.DELETE, conf.DeletePeerHandler)
 
-	configServerRouter := daemon.NewConfigRouter()
-	configServerRouter.Register(daemon.ADD, conf.AddServerHandler)
-	configServerRouter.Register(daemon.DELETE, conf.DeleteServerHandler)
+	configServerRouter := config.NewConfigRouter()
+	configServerRouter.Register(daemonproto.ADD, conf.AddServerHandler)
+	configServerRouter.Register(daemonproto.DELETE, conf.DeleteServerHandler)
 
-	configRouter := daemon.NewConfigRouter()
-	configRouter.Register(daemon.SHOW, conf.ShowConfigHandler)
-	configRouter.Register(daemon.SAVE, conf.SaveConfigHandler)
-	configRouter.Register(daemon.RELOAD, conf.ReloadConfigHandler)
+	configRouter := config.NewConfigRouter()
+	configRouter.Register(daemonproto.SHOW, conf.ShowConfigHandler)
+	configRouter.Register(daemonproto.SAVE, conf.SaveConfigHandler)
+	configRouter.Register(daemonproto.RELOAD, conf.ReloadConfigHandler)
 
-	keyringRouter := daemon.NewKeyRingRouter()
-	keyringRouter.Register(daemon.SHOW, apikeyring.ShowKeyringHandler)
-	keyringRouter.Register(daemon.BOOTSTRAP, apikeyring.BootstrapKeyringHandler)
-	keyringRouter.Register(daemon.RELOAD, apikeyring.ReloadKeyringHandler)
+	keyringRouter := keyring.NewKeyRingRouter()
+	keyringRouter.Register(daemonproto.SHOW, apikeyring.ShowKeyringHandler)
+	keyringRouter.Register(daemonproto.BOOTSTRAP, apikeyring.BootstrapKeyringHandler)
+	keyringRouter.Register(daemonproto.RELOAD, apikeyring.ReloadKeyringHandler)
 
 	vpnRouter := daemon.NewVpnRouter()
-	vpnRouter.Register(daemon.SHOW, ctx.VpnShowHandler)
-	vpnRouter.Register(daemon.SAVE, ctx.VpnSaveHandler)
+	vpnRouter.Register(daemonproto.SHOW, ctx.VpnShowHandler)
+	vpnRouter.Register(daemonproto.SAVE, ctx.VpnSaveHandler)
 
 	ctxRouter := daemon.NewContextRouter()
-	ctxRouter.Register(daemon.SHOW, ctx.ShowRoutesHandler)
+	ctxRouter.Register(daemonproto.SHOW, ctx.ShowRoutesHandler)
 
 	ctx.Register("cloud", lnRouter)
 	ctx.Register("keyring", keyringRouter)

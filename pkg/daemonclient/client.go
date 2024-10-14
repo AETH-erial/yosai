@@ -12,7 +12,9 @@ import (
 	"strings"
 
 	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
+	"git.aetherial.dev/aeth/yosai/pkg/config"
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
+	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 )
@@ -25,12 +27,12 @@ type DaemonClient struct {
 const BLANK_JSON = "{\"blank\": \"hey!\"}"
 
 /*
-Gets the configuration from the upstream daemon/server
+Gets the configuration from the upstream daemonproto/server
 */
-func (d DaemonClient) GetConfig() daemon.Configuration {
+func (d DaemonClient) GetConfig() config.Configuration {
 
 	resp := d.Call([]byte(BLANK_JSON), "config", "show")
-	var cfg daemon.Configuration
+	var cfg config.Configuration
 	err := json.Unmarshal(resp.Body, &cfg)
 	if err != nil {
 		log.Fatal("error unmarshalling config struct ", err.Error())
@@ -59,7 +61,7 @@ func makeArgMap(arg string) map[string]string {
 
 /*
 Convenience function for building a request to add a server to the
-daemon's configuration table
+daemonproto's configuration table
 
 	:param argMap: a map with named elements that correspond to the subsequent struct's fields
 */
@@ -72,7 +74,7 @@ func serverAddRequestBuilder(argMap map[string]string) []byte {
 		log.Fatal("Port passed: ", port, " Was not in the valid range of between 1-65535.")
 	}
 
-	b, _ := json.Marshal(daemon.VpnServer{WanIpv4: argMap["wan"], Port: port, Name: argMap["name"]})
+	b, _ := json.Marshal(config.VpnServer{WanIpv4: argMap["wan"], Port: port, Name: argMap["name"]})
 
 	return b
 }
@@ -83,7 +85,7 @@ Wraps the creation of a request to add/delete a peer from the config
 	:param argMap: a map with named elements that correspond to the subsequent struct's fields
 */
 func peerAddRequestBuilder(argMap map[string]string) []byte {
-	b, _ := json.Marshal(daemon.VpnClient{Name: argMap["name"], Pubkey: argMap["pubkey"]})
+	b, _ := json.Marshal(config.VpnClient{Name: argMap["name"], Pubkey: argMap["pubkey"]})
 	return b
 }
 
@@ -121,13 +123,13 @@ func (d DaemonClient) addLinodeRequestBuilder(arg string) []byte {
 
 }
 
-func (d DaemonClient) Call(payload []byte, target string, method string) daemon.SockMessage {
-	msg := daemon.SockMessage{
-		Type:       daemon.MsgRequest,
-		TypeLen:    int8(len(daemon.MsgRequest)),
+func (d DaemonClient) Call(payload []byte, target string, method string) daemonproto.SockMessage {
+	msg := daemonproto.SockMessage{
+		Type:       daemonproto.MsgRequest,
+		TypeLen:    int8(len(daemonproto.MsgRequest)),
 		StatusMsg:  "",
 		StatusCode: 0,
-		Version:    daemon.SockMsgVers,
+		Version:    daemonproto.SockMsgVers,
 		Body:       payload,
 		Target:     target,
 		Method:     method,
@@ -138,7 +140,7 @@ func (d DaemonClient) Call(payload []byte, target string, method string) daemon.
 	}
 	defer conn.Close()
 
-	buf := bytes.NewBuffer(daemon.Marshal(msg))
+	buf := bytes.NewBuffer(daemonproto.Marshal(msg))
 	_, err = io.Copy(conn, buf)
 	if err != nil {
 		log.Fatal("write error:", err)
@@ -152,14 +154,14 @@ func (d DaemonClient) Call(payload []byte, target string, method string) daemon.
 		}
 		log.Fatal(err)
 	}
-	return daemon.Unmarshal(resp.Bytes())
+	return daemonproto.Unmarshal(resp.Bytes())
 
 }
 
 const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
 
 /*
-Build a JSON request to send the yosaid daemon
+Build a JSON request to send the yosaid daemonproto
 
 	    :param v: a struct to serialize for a request
 		:param value: a string to put into the request
@@ -196,7 +198,7 @@ func jsonBuilder(v interface{}, value string) []byte {
 }
 
 /*
-Create a server, and propogate it across the daemon's system
+Create a server, and propogate it across the daemonproto's system
 */
 func (d DaemonClient) NewServer(name string) error {
 	// create new server in cloud environment
@@ -204,28 +206,28 @@ func (d DaemonClient) NewServer(name string) error {
 	if err != nil {
 		return err
 	}
-	// add server data to daemon configuration
+	// add server data to daemonproto configuration
 	conf := d.GetConfig()
-	b, _ := json.Marshal(daemon.VpnServer{WanIpv4: ipv4, Name: name, Port: conf.Service.VpnServerPort})
+	b, _ := json.Marshal(config.VpnServer{WanIpv4: ipv4, Name: name, Port: conf.Service.VpnServerPort})
 	resp := d.Call(b, "config-server", "add")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 
 	// add configuration data to ansible
 	resp = d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, name), "ansible-hosts", "add")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
 }
 
 /*
-Helper function to get servers from the daemon config
+Helper function to get servers from the daemonproto config
 
 	:param val: either the WAN IPv4 address, or the name of the server to get
 */
-func (d DaemonClient) GetServer(val string) (daemon.VpnServer, error) {
+func (d DaemonClient) GetServer(val string) (config.VpnServer, error) {
 	cfg := d.GetConfig()
 	for name := range cfg.Service.Servers {
 		if cfg.Service.Servers[name].WanIpv4 == val {
@@ -236,7 +238,7 @@ func (d DaemonClient) GetServer(val string) (daemon.VpnServer, error) {
 			return server, nil
 		}
 	}
-	return daemon.VpnServer{}, &ServerNotFound{Name: val}
+	return config.VpnServer{}, &ServerNotFound{Name: val}
 
 }
 
@@ -246,18 +248,18 @@ Add a server to the configuration
 func (d DaemonClient) AddServeToConfig(val string) error {
 	argMap := makeArgMap(val)
 	resp := d.Call(serverAddRequestBuilder(argMap), "config-server", "add")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
 }
 
 /*
-Trigger the daemon to execute the vpn rotation playbook on all of the servers in the ansible inventory
+Trigger the daemonproto to execute the vpn rotation playbook on all of the servers in the ansible inventory
 */
-func (d DaemonClient) ConfigureServers() (daemon.SockMessage, error) {
+func (d DaemonClient) ConfigureServers() (daemonproto.SockMessage, error) {
 	resp := d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, semaphore.YosaiVpnRotationJob), "ansible-job", "run")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return resp, &DaemonClientError{SockMsg: resp}
 	}
 	taskInfo := semaphore.TaskInfo{}
@@ -266,7 +268,7 @@ func (d DaemonClient) ConfigureServers() (daemon.SockMessage, error) {
 		return resp, &DaemonClientError{SockMsg: resp}
 	}
 	resp = d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, fmt.Sprint(taskInfo.ID)), "ansible-job", "poll")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return resp, &DaemonClientError{SockMsg: resp}
 	}
 	return resp, nil
@@ -278,9 +280,9 @@ Poll until a server is done being created
 
 	:param name: the name of the server
 */
-func (d DaemonClient) PollServer(name string) (daemon.SockMessage, error) {
+func (d DaemonClient) PollServer(name string) (daemonproto.SockMessage, error) {
 	resp := d.Call(jsonBuilder(linode.PollLinodeRequest{}, name), "cloud", "poll")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return resp, &DaemonClientError{SockMsg: resp}
 	}
 	return resp, nil
@@ -288,14 +290,14 @@ func (d DaemonClient) PollServer(name string) (daemon.SockMessage, error) {
 }
 
 /*
-Remove a server from the daemon configuration
+Remove a server from the daemonproto configuration
 
 	:param name: the name of the server to remove
 */
 func (d DaemonClient) RemoveServerFromConfig(name string) error {
-	b, _ := json.Marshal(daemon.VpnServer{Name: name})
+	b, _ := json.Marshal(config.VpnServer{Name: name})
 	resp := d.Call(b, "config-server", "delete")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
@@ -312,7 +314,7 @@ func (d DaemonClient) RemoveServerFromAnsible(name string) error {
 		return err
 	}
 	resp := d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, server.WanIpv4), "ansible-hosts", "delete")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
@@ -327,47 +329,24 @@ Destroy a server by its logical name in the configuration, ansible inventory, an
 func (d DaemonClient) DestroyServer(name string) error {
 	cfg := d.GetConfig()
 	resp := d.Call(jsonBuilder(linode.DeleteLinodeRequest{}, name), "cloud", "delete")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	resp = d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, cfg.Service.Servers[name].WanIpv4), "ansible-hosts", "delete")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
-	b, _ := json.Marshal(daemon.VpnServer{Name: name})
+	b, _ := json.Marshal(config.VpnServer{Name: name})
 	resp = d.Call(b, "config-server", "delete")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
 
 }
 
-func (d DaemonClient) BringDownIntf(name string) (daemon.SockMessage, error) {
-	b, _ := json.Marshal(daemon.StartWireguardRequest{InterfaceName: name})
-	resp := d.Call(b, "daemon", "wg-down")
-	if resp.StatusCode != daemon.REQUEST_OK {
-		return resp, &DaemonClientError{SockMsg: resp}
-	}
-	return resp, nil
-}
-
-func (d DaemonClient) BringUpIntf(name string) (daemon.SockMessage, error) {
-	b, _ := json.Marshal(daemon.StartWireguardRequest{InterfaceName: name})
-	resp := d.Call(b, "daemon", "wg-up")
-	if resp.StatusCode != daemon.REQUEST_OK {
-		return resp, &DaemonClientError{SockMsg: resp}
-	}
-	return resp, nil
-
-}
-
-func (d DaemonClient) DestroyIntf(name string) error {
-	return nil
-}
-
-func (d DaemonClient) HealthCheck() (daemon.SockMessage, error) {
-	return daemon.SockMessage{}, nil
+func (d DaemonClient) HealthCheck() (daemonproto.SockMessage, error) {
+	return daemonproto.SockMessage{}, nil
 }
 func (d DaemonClient) LockFirewall() error {
 	return nil
@@ -376,7 +355,7 @@ func (d DaemonClient) LockFirewall() error {
 /*
 Render the a wireguard configuration file
 */
-func (d DaemonClient) RenderWgConfig(arg string) daemon.SockMessage {
+func (d DaemonClient) RenderWgConfig(arg string) daemonproto.SockMessage {
 	argMap := makeArgMap(arg)
 
 	b, _ := json.Marshal(daemon.ConfigRenderRequest{Server: argMap["server"], Client: argMap["client"]})
@@ -386,7 +365,7 @@ func (d DaemonClient) RenderWgConfig(arg string) daemon.SockMessage {
 /*
 Render the a wireguard configuration file
 */
-func (d DaemonClient) SaveWgConfig(arg string) daemon.SockMessage {
+func (d DaemonClient) SaveWgConfig(arg string) daemonproto.SockMessage {
 	argMap := makeArgMap(arg)
 
 	b, _ := json.Marshal(daemon.ConfigRenderRequest{Server: argMap["server"], Client: argMap["client"]})
@@ -417,36 +396,36 @@ func (d DaemonClient) addLinode(name string) (string, error) {
 
 func (d DaemonClient) BootstrapAll() error {
 	resp := d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, "all"), "ansible", "bootstrap")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
 }
 
 /*
-Force the daemon to reload its configuration
+Force the daemonproto to reload its configuration
 */
 func (d DaemonClient) ForceReload() error {
 	resp := d.Call([]byte(BLANK_JSON), "config", "reload")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
 }
 
 /*
-Force a configuration save to the daemon/server
+Force a configuration save to the daemonproto/server
 */
 func (d DaemonClient) ForceSave() error {
 	resp := d.Call([]byte(BLANK_JSON), "config", "save")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
 
 }
 
-func (d DaemonClient) ShowAllRoutes() daemon.SockMessage {
+func (d DaemonClient) ShowAllRoutes() daemonproto.SockMessage {
 	return d.Call([]byte(BLANK_JSON), "routes", "show")
 
 }
@@ -459,11 +438,11 @@ This creates a new server, wrapping the DaemonClient.NewServer() function, and t
 func (d DaemonClient) ServiceInit(name string) error {
 	d.NewServer(name)
 	resp := d.Call(jsonBuilder(linode.PollLinodeRequest{}, name), "cloud", "poll")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	resp = d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, "VPN Rotation playbook"), "ansible-job", "run")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	semaphoreResp := semaphore.TaskInfo{}
@@ -472,14 +451,14 @@ func (d DaemonClient) ServiceInit(name string) error {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	resp = d.Call(jsonBuilder(semaphore.SemaphoreRequest{}, fmt.Sprint(semaphoreResp.ID)), "ansible-job", "poll")
-	if resp.StatusCode != daemon.REQUEST_OK {
+	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
 	}
 	return nil
 }
 
 type DaemonClientError struct {
-	SockMsg daemon.SockMessage
+	SockMsg daemonproto.SockMessage
 }
 
 func (d *DaemonClientError) Error() string {
