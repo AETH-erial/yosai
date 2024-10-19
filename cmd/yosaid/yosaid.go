@@ -44,7 +44,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading env file: ", err)
 	}
-	configServer := config.NewConfigServerImpl("localhost:8080", "http")
+	configServer := config.NewConfigServerImpl("192.168.50.35:8080", "http")
 	conf := config.NewConfiguration(os.Stdout, "aeth")
 	configServer.Propogate(conf)
 	fmt.Printf("config gotten: %+v\n", conf)

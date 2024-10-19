@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"time"
 
 	"git.aetherial.dev/aeth/yosai/pkg/config"
-	"github.com/mattn/go-sqlite3"
 )
 
 var (
@@ -45,12 +46,11 @@ func NewSQLiteRepo(db *sql.DB, out io.Writer) *SQLiteRepo {
 }
 
 func (s *SQLiteRepo) Log(msg ...string) {
-	logMsg := "SQL Lite log:"
+	data := "config.SQLiteRepo: "
 	for i := range msg {
-		logMsg = logMsg + msg[i]
+		data = data + " " + msg[i] + "\n"
 	}
-	logMsg = logMsg + "\n"
-	s.out.Write([]byte(logMsg))
+	s.out.Write([]byte(fmt.Sprintf(LogMsgTmpl, time.Now().String(), data)))
 
 }
 
@@ -58,7 +58,7 @@ func (s *SQLiteRepo) Migrate() {
 
 	userTable := `
     CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
 		name TEXT NOT NULL
     );
     `
@@ -98,7 +98,7 @@ func (s *SQLiteRepo) Migrate() {
 		name TEXT NOT NULL,
 		pubkey TEXT NOT NULL,
 		vpn_ipv4 TEXT NOT NULL,
-		default_client INTEGER NOT NULL
+		default_client BOOLEAN NOT NULL
 	);
 	`
 
@@ -134,7 +134,7 @@ Retrieve a user struct from, querying by their username
 	:param name: the username of the querying user Note -> must validate the username before calling
 */
 func (s *SQLiteRepo) GetUser(name config.Username) (config.User, error) {
-	row := s.db.QueryRow("SELECT * FROM users WHERE name = ?", name)
+	row := s.db.QueryRow("SELECT * FROM users WHERE name = $1", name)
 
 	var user config.User
 	if err := row.Scan(&user.Id, &user.Name); err != nil {
@@ -165,7 +165,7 @@ func (s *SQLiteRepo) UpdateUser(username config.Username, config config.Configur
 		s.Log("Error getting the user: ", string(username), err.Error())
 		return err
 	}
-	_, err = trx.Exec("UPDATE cloud SET image = ?, region = ?, linode_type = ? WHERE user_id = ?",
+	_, err = trx.Exec("UPDATE cloud SET image = $1, region = $2, linode_type = $3 WHERE user_id = $4",
 		config.Cloud.Image,
 		config.Cloud.Region,
 		config.Cloud.LinodeType,
@@ -173,7 +173,7 @@ func (s *SQLiteRepo) UpdateUser(username config.Username, config config.Configur
 	if err != nil {
 		return err
 	}
-	_, err = trx.Exec("UPDATE ansible SET repo_url = ?, branch = ?, playbook_name = ?, ansible_backend = ?, ansible_backend_url = ? WHERE user_id = ?",
+	_, err = trx.Exec("UPDATE ansible SET repo_url = $1, branch = $2, playbook_name = $3, ansible_backend = $4, ansible_backend_url = $5 WHERE user_id = $6",
 		config.Ansible.Repo,
 		config.Ansible.Branch,
 		config.Ansible.PlaybookName,
@@ -183,7 +183,7 @@ func (s *SQLiteRepo) UpdateUser(username config.Username, config config.Configur
 	if err != nil {
 		return err
 	}
-	_, err = trx.Exec("DELETE FROM servers WHERE user_id = ?", user.Id)
+	_, err = trx.Exec("DELETE FROM servers WHERE user_id = $1", user.Id)
 	if err != nil {
 		s.Log("Failed to drop the users server entries: ", err.Error())
 		return err
@@ -193,7 +193,7 @@ func (s *SQLiteRepo) UpdateUser(username config.Username, config config.Configur
 		s.Log("Failed to propogate the VPN servers into the appropriate table: ", err.Error())
 		return err
 	}
-	_, err = trx.Exec("DELETE FROM clients WHERE user_id = ?", user.Id)
+	_, err = trx.Exec("DELETE FROM clients WHERE user_id = $1", user.Id)
 	if err != nil {
 		s.Log("Failed to drop the users client entries: ", err.Error())
 		return err
@@ -204,7 +204,7 @@ func (s *SQLiteRepo) UpdateUser(username config.Username, config config.Configur
 		return err
 	}
 
-	_, err = trx.Exec("UPDATE service SET vpn_ip = ?, vpn_subnet_mask = ?, vpn_server_port = ?, secrets_backend = ?, secrets_backend_url = ? WHERE user_id = ?",
+	_, err = trx.Exec("UPDATE service SET vpn_ip = $1, vpn_subnet_mask = $2, vpn_server_port = $3, secrets_backend = $4, secrets_backend_url = $5 WHERE user_id = $6",
 		config.Service.VpnAddressSpace.String(),
 		config.Service.VpnMask,
 		config.Service.VpnServerPort,
@@ -230,7 +230,7 @@ Create an entry in the vpn information table
 		:param config: the config.Configuration with the configuration data
 */
 func (s *SQLiteRepo) insertServiceInfo(user config.User, config config.Configuration, trx *sql.Tx) error {
-	rows, err := trx.Query("SELECT * FROM service WHERE user_id = ?", user.Id)
+	rows, err := trx.Query("SELECT * FROM service WHERE user_id = $1", user.Id)
 	if err != nil {
 		s.Log("Failed to perform pre-insert check", err.Error())
 		return err
@@ -240,7 +240,7 @@ func (s *SQLiteRepo) insertServiceInfo(user config.User, config config.Configura
 		return ErrDuplicate
 	}
 
-	_, err = trx.Exec("INSERT INTO service(user_id, vpn_ip, vpn_subnet_mask, vpn_server_port, secrets_backend, secrets_backend_url) values(?,?,?,?,?,?)",
+	_, err = trx.Exec("INSERT INTO service(user_id, vpn_ip, vpn_subnet_mask, vpn_server_port, secrets_backend, secrets_backend_url) values($1,$2,$3,$4,$5,$6)",
 		user.Id,
 		config.Service.VpnAddressSpace.String(),
 		config.Service.VpnMask,
@@ -248,12 +248,8 @@ func (s *SQLiteRepo) insertServiceInfo(user config.User, config config.Configura
 		config.Service.SecretsBackend,
 		config.Service.SecretsBackendUrl)
 	if err != nil {
-		var sqliteErr sqlite3.Error
-		if errors.As(err, &sqliteErr) {
-			if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
-				return ErrDuplicate
-			}
-		}
+		s.Log(string(user.Id), config.Service.VpnAddressSpace.String(), string(config.Service.VpnMask), string(config.Service.VpnServerPort), config.Service.SecretsBackend, config.Service.SecretsBackendUrl)
+		s.Log("Error occured writing to the database: ", err.Error())
 		return err
 	}
 	return nil
@@ -266,7 +262,7 @@ Create an entry in the client table for a user
 		:param cloudConfig: the cloud specific configuration for the user
 */
 func (s *SQLiteRepo) insertClient(user config.User, config config.Configuration, trx *sql.Tx) error {
-	rows, err := trx.Query("SELECT * FROM clients WHERE user_id = ?", user.Id)
+	rows, err := trx.Query("SELECT * FROM clients WHERE user_id = $1", user.Id)
 	if err != nil {
 		s.Log("Failed to perform pre-insert check", err.Error())
 		return err
@@ -277,13 +273,14 @@ func (s *SQLiteRepo) insertClient(user config.User, config config.Configuration,
 	}
 	for i := range config.Service.Clients {
 		client := config.Service.Clients[i]
-		_, err = trx.Exec("INSERT INTO clients(user_id, name, pubkey, vpn_ipv4, default_client) values(?,?,?,?,?)",
+		_, err = trx.Exec("INSERT INTO clients(user_id, name, pubkey, vpn_ipv4, default_client) values($1,$2,$3,$4,$5)",
 			user.Id,
 			client.Name,
 			client.Pubkey,
-			client.VpnIpv4,
+			client.VpnIpv4.String(),
 			client.Default)
 		if err != nil {
+			s.Log(fmt.Sprintf("%+v\n", client), fmt.Sprintf("%+v\n", user))
 			s.Log("Failed to create row: ", err.Error())
 			return err
 		}
@@ -299,7 +296,7 @@ Create an entry in the server table for a user
 		:param cloudConfig: the cloud specific configuration for the user
 */
 func (s *SQLiteRepo) insertServer(user config.User, config config.Configuration, trx *sql.Tx) error {
-	rows, err := trx.Query("SELECT * FROM servers WHERE user_id = ?", user.Id)
+	rows, err := trx.Query("SELECT * FROM servers WHERE user_id = $1", user.Id)
 	if err != nil {
 		s.Log("Failed to perform pre-insert check", err.Error())
 		return err
@@ -310,11 +307,11 @@ func (s *SQLiteRepo) insertServer(user config.User, config config.Configuration,
 	}
 	for i := range config.Service.Servers {
 		server := config.Service.Servers[i]
-		_, err = trx.Exec("INSERT INTO servers(user_id, name, wan_ipv4, vpn_ipv4, port) values(?,?,?,?,?)",
+		_, err = trx.Exec("INSERT INTO servers(user_id, name, wan_ipv4, vpn_ipv4, port) values($1,$2,$3,$4,$5)",
 			user.Id,
 			server.Name,
 			server.WanIpv4,
-			server.VpnIpv4,
+			server.VpnIpv4.String(),
 			server.Port)
 		if err != nil {
 			s.Log("Failed to create row: ", err.Error())
@@ -332,7 +329,7 @@ Create an entry in the ansible table for a user
 		:param cloudConfig: the cloud specific configuration for the user
 */
 func (s *SQLiteRepo) insertUserAnsible(user config.User, config config.Configuration, trx *sql.Tx) error {
-	rows, err := trx.Query("SELECT * FROM ansible WHERE user_id = ?", user.Id)
+	rows, err := trx.Query("SELECT * FROM ansible WHERE user_id = $1", user.Id)
 	if err != nil {
 		s.Log("Failed to perform pre-insert check", err.Error())
 		return err
@@ -341,7 +338,7 @@ func (s *SQLiteRepo) insertUserAnsible(user config.User, config config.Configura
 		s.Log("Duplicate INSERT attempted, update instead.", err.Error())
 		return ErrDuplicate
 	}
-	_, err = trx.Exec("INSERT INTO ansible(user_id, repo_url, branch, playbook_name, ansible_backend, ansible_backend_url) values(?,?,?,?,?,?)",
+	_, err = trx.Exec("INSERT INTO ansible(user_id, repo_url, branch, playbook_name, ansible_backend, ansible_backend_url) values($1,$2,$3,$4,$5,$6)",
 		user.Id,
 		config.Ansible.Repo,
 		config.Ansible.Branch,
@@ -363,7 +360,7 @@ Create an entry in the cloud table for a user
 		:param cloudConfig: the cloud specific configuration for the user
 */
 func (s *SQLiteRepo) insertUserCloud(user config.User, config config.Configuration, trx *sql.Tx) error {
-	rows, err := trx.Query("SELECT * FROM cloud WHERE user_id = ?", user.Id)
+	rows, err := trx.Query("SELECT * FROM cloud WHERE user_id = $1", user.Id)
 	if err != nil {
 		s.Log("Failed to perform pre-insert check", err.Error())
 		return err
@@ -372,7 +369,7 @@ func (s *SQLiteRepo) insertUserCloud(user config.User, config config.Configurati
 		s.Log("Duplicate INSERT attempted, update instead.", err.Error())
 		return ErrDuplicate
 	}
-	_, err = trx.Exec("INSERT INTO cloud(user_id, image, region, linode_type) values(?,?,?,?)",
+	_, err = trx.Exec("INSERT INTO cloud(user_id, image, region, linode_type) values($1,$2,$3,$4)",
 		user.Id,
 		config.Cloud.Image,
 		config.Cloud.Region,
@@ -426,30 +423,11 @@ Add a user to the database and return a config.User struct
 */
 func (s *SQLiteRepo) AddUser(name config.Username) (config.User, error) {
 	var user config.User
-	rows, err := s.db.Query("SELECT * FROM users WHERE name = ?", name)
-	if err != nil {
-		s.Log(err.Error())
-		var sqliteErr sqlite3.Error
-		if errors.As(err, &sqliteErr) {
-			if errors.Is(sqliteErr.ExtendedCode, sqlite3.ErrConstraintUnique) {
-				return user, ErrDuplicate
-			}
-		}
-		return user, err
-	}
-	if rows.Next() {
-		s.Log("Duplicate username, please use another")
-		return user, ErrDuplicate
-	}
-	res, err := s.db.Exec("INSERT INTO users(name) values(?)", name)
+	_, err := s.db.Exec("INSERT INTO users(name) values($1)", name)
 	if err != nil {
 		return user, err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return user, err
-	}
-	return config.User{Name: name, Id: int(id)}, nil
+	return s.GetUser(name)
 }
 
 /*
@@ -463,14 +441,14 @@ func (s *SQLiteRepo) GetConfigByUser(username config.Username) (config.Configura
 	if err != nil {
 		return *cfg, err
 	}
-	row := s.db.QueryRow("SELECT * FROM cloud WHERE user_id = ?", user.Id)
+	row := s.db.QueryRow("SELECT * FROM cloud WHERE user_id = $1", user.Id)
 	if err := row.Scan(&user.Id, &cfg.Cloud.Image, &cfg.Cloud.Region, &cfg.Cloud.LinodeType); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return *cfg, ErrNotExists
 		}
 		return *cfg, err
 	}
-	row = s.db.QueryRow("SELECT * FROM ansible WHERE user_id = ?", user.Id)
+	row = s.db.QueryRow("SELECT * FROM ansible WHERE user_id = $1", user.Id)
 	if err := row.Scan(
 		&user.Id,
 		&cfg.Ansible.Repo,
@@ -483,7 +461,7 @@ func (s *SQLiteRepo) GetConfigByUser(username config.Username) (config.Configura
 		}
 		return *cfg, err
 	}
-	rows, err := s.db.Query("SELECT * FROM servers WHERE user_id = ?", user.Id)
+	rows, err := s.db.Query("SELECT * FROM servers WHERE user_id = $1", user.Id)
 	if err != nil {
 		return *cfg, err
 	}
@@ -497,7 +475,7 @@ func (s *SQLiteRepo) GetConfigByUser(username config.Username) (config.Configura
 	if err = rows.Err(); err != nil {
 		return *cfg, err
 	}
-	rows, err = s.db.Query("SELECT * FROM clients WHERE user_id = ?", user.Id)
+	rows, err = s.db.Query("SELECT * FROM clients WHERE user_id = $1", user.Id)
 	if err != nil {
 		return *cfg, err
 	}
@@ -508,7 +486,7 @@ func (s *SQLiteRepo) GetConfigByUser(username config.Username) (config.Configura
 		}
 		cfg.Service.Clients[client.Name] = client
 	}
-	row = s.db.QueryRow("SELECT * FROM service WHERE user_id = ?", user.Id)
+	row = s.db.QueryRow("SELECT * FROM service WHERE user_id = $1", user.Id)
 	var vpnIp string
 	if err = row.Scan(&user.Id, &vpnIp, &cfg.Service.VpnMask, &cfg.Service.VpnServerPort, &cfg.Service.SecretsBackend, &cfg.Service.SecretsBackendUrl); err != nil {
 		return *cfg, err

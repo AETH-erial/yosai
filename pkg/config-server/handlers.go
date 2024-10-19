@@ -6,10 +6,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"git.aetherial.dev/aeth/yosai/pkg/config"
 )
 
+const LogMsgTmpl = "YOSAI Server ||| time: %s ||| %s\n"
 const UserQueryParam = "username"
 
 /*
@@ -31,11 +33,12 @@ type ExecutionHandler struct {
 }
 
 func (e *ExecutionHandler) Log(msg ...string) {
-	logMsg := "YOSAI SERVER LOGGER ::: "
+	data := "config.ExecutionHandler: "
+
 	for i := range msg {
-		logMsg = logMsg + " " + msg[i] + "\n"
+		data = data + " " + msg[i] + "\n"
 	}
-	e.out.Write([]byte(logMsg))
+	e.out.Write([]byte(fmt.Sprintf(LogMsgTmpl, time.Now().String(), data)))
 }
 
 /*
@@ -54,6 +57,7 @@ func (e *ExecutionHandler) GetUserConfiguration(w http.ResponseWriter, req *http
 	user := req.PathValue(UserQueryParam)
 	if user == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		e.Log("Parameter 'user' not found in the query")
 		return
 	}
 	e.Log("Called from: ", user)
