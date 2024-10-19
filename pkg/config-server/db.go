@@ -467,9 +467,16 @@ func (s *SQLiteRepo) GetConfigByUser(username config.Username) (config.Configura
 	}
 	for rows.Next() {
 		var server config.VpnServer
-		if err := rows.Scan(&user.Id, &server.Name, &server.WanIpv4, &server.VpnIpv4, &server.Port); err != nil {
+		var ipStr string
+		if err := rows.Scan(&user.Id, &server.Name, &server.WanIpv4, &ipStr, &server.Port); err != nil {
 			return *cfg, err
 		}
+		s.Log(ipStr)
+		ipParsed := net.ParseIP(ipStr)
+		if ipParsed == nil {
+			s.Log("Couldnt parse address: ", ipStr, err.Error())
+		}
+		server.VpnIpv4 = ipParsed
 		cfg.Service.Servers[server.Name] = server
 	}
 	if err = rows.Err(); err != nil {
@@ -481,9 +488,16 @@ func (s *SQLiteRepo) GetConfigByUser(username config.Username) (config.Configura
 	}
 	for rows.Next() {
 		var client config.VpnClient
-		if err := rows.Scan(&user.Id, &client.Name, &client.Pubkey, &client.VpnIpv4, &client.Default); err != nil {
+		var ipStr string
+		if err := rows.Scan(&user.Id, &client.Name, &client.Pubkey, &ipStr, &client.Default); err != nil {
 			return *cfg, err
 		}
+		s.Log(ipStr)
+		ipParsed := net.ParseIP(ipStr)
+		if ipParsed == nil {
+			s.Log("Couldnt parse address: ", ipStr, err.Error())
+		}
+		client.VpnIpv4 = ipParsed
 		cfg.Service.Clients[client.Name] = client
 	}
 	row = s.db.QueryRow("SELECT * FROM service WHERE user_id = $1", user.Id)

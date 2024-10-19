@@ -32,7 +32,7 @@ Gets the configuration from the upstream daemonproto/server
 func (d DaemonClient) GetConfig() config.Configuration {
 
 	resp := d.Call([]byte(BLANK_JSON), "config", "show")
-	var cfg config.Configuration
+	cfg := config.Configuration{}
 	err := json.Unmarshal(resp.Body, &cfg)
 	if err != nil {
 		log.Fatal("error unmarshalling config struct ", err.Error())
@@ -50,13 +50,30 @@ func makeArgMap(arg string) map[string]string {
 	argSplit := strings.Split(arg, ",")
 	argMap := map[string]string{}
 	for i := range argSplit {
-		a := strings.Split(strings.TrimSpace(argSplit[i]), "=")
-		if len(a) != 2 {
-			log.Fatal("Key values must be passed comma delimmited, seperated with an '='. i.e. 'public=12345abcdef,secret=qwerty69420'")
-		}
+		a := strings.SplitN(strings.TrimSpace(argSplit[i]), "=", 2)
+		fmt.Println(a)
+		/*
+			if len(a) != 2 {
+				log.Fatal("Key values must be passed comma delimmited, seperated with an '='. i.e. 'public=12345abcdef,secret=qwerty69420'")
+			}
+		*/
 		argMap[strings.TrimSpace(strings.ToLower(a[0]))] = strings.TrimSpace(a[1])
 	}
 	return argMap
+}
+
+/*
+Take an argument string of comma-delimmited k/v pairs (denoted with an '=' sign and
+turn it into a hashmap, and then pack it into a JSON byte array
+
+	:param msg: the message string to parse
+*/
+func Pack(msg string) []byte {
+	b, err := json.Marshal(makeArgMap(msg))
+	if err != nil {
+		log.Fatal("Fatal problem trying to marshal the message: ", msg, " into a JSON string: ", err.Error())
+	}
+	return b
 }
 
 /*

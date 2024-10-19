@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,9 +14,16 @@ import (
 )
 
 func main() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatal("Couldnt load the env file: ", err.Error())
+	envFile := flag.String("env", "", "pass this to read an env file")
+	dbSeed := flag.String("seed", "", "Pass this to seed the database with a configuration file")
+	flag.Parse()
+	if *envFile == "" {
+		fmt.Println("No env file passed, attempting to run with raw environment")
+	} else {
+		err := godotenv.Load(*envFile)
+		if err != nil {
+			log.Fatal("Couldnt load the env file: ", err.Error())
+		}
 	}
 
 	dbhost := os.Getenv("DB_HOST")
@@ -41,20 +49,17 @@ func main() {
 	configServerDb := configserver.NewSQLiteRepo(db, os.Stdout)
 
 	configServerDb.Migrate()
-	conf := config.NewConfiguration(os.Stdout, config.ValidateUsername("aeth"))
-	config.NewConfigHostImpl("./.config.json").Propogate(conf)
-	user, err := configServerDb.AddUser(config.ValidateUsername("aeth"))
-	if err != nil {
-		log.Fatal(err.Error(), "failed to add user")
-	}
+	if *dbSeed != "" {
+		conf := config.NewConfiguration(os.Stdout, config.ValidateUsername("aeth"))
+		config.NewConfigHostImpl("./.config.json").Propogate(conf)
+		user, err := configServerDb.AddUser(config.ValidateUsername("aeth"))
+		if err != nil {
+			log.Fatal(err.Error(), "failed to add user")
+		}
 
-	configServerDb.SeedUser(user, *conf)
-	fmt.Println("Database created and seeded.")
-	dbConf, err := configServerDb.GetConfigByUser("aeth")
-	if err != nil {
-		log.Fatal(err)
+		configServerDb.SeedUser(user, *conf)
+		fmt.Println("Database created and seeded.")
 	}
-	fmt.Printf("%+v\n", dbConf)
 	configserver.RunHttpServer(8080, configServerDb, os.Stdout)
 
 }

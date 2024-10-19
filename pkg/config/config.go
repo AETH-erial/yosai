@@ -344,7 +344,7 @@ func (c *Configuration) AddServer(addr net.IP, name string, wan string, port int
 
 type VpnClient struct {
 	Name    string `json:"name"`
-	VpnIpv4 net.IP
+	VpnIpv4 net.IP `json:"vpn_ipv4"`
 	Pubkey  string `json:"pubkey"`
 	Default bool   `json:"default"`
 }
@@ -352,8 +352,8 @@ type VpnClient struct {
 type VpnServer struct {
 	Name    string `json:"name"`     // this Label is what is used to index that server and its data within the Daemons model of the VPN environment
 	WanIpv4 string `json:"wan_ipv4"` // Public IPv4
-	VpnIpv4 net.IP // the IP address that the server will occupy on the network
-	Port    int
+	VpnIpv4 net.IP `json:"vpn_ipv4"` // the IP address that the server will occupy on the network
+	Port    int    `json:"port"`
 }
 
 /*
