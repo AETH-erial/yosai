@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 
 	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
@@ -19,6 +20,8 @@ import (
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 	"github.com/joho/godotenv"
 )
+
+const ConfigFileName = "yosai.json"
 
 func GetSshKeyPrompt(daemonKeyring keyring.DaemonKeyRing, conf config.Configuration) {
 	fmt.Print("Enter the full path of the ssh key to use for your daemon: ")
@@ -36,12 +39,19 @@ func GetSshKeyPrompt(daemonKeyring keyring.DaemonKeyRing, conf config.Configurat
 	if err != nil {
 		log.Fatal("Error reading the private key: ", err)
 	}
-	daemonKeyring.AddKey(keytags.SYSTEM_SSH_KEYNAME, keyring.SshKey{
+	err = daemonKeyring.AddKey(keytags.SYSTEM_SSH_KEYNAME, keyring.SshKey{
 		PublicKey:  strings.Trim(string(pubkeyBytes), "\n"),
 		PrivateKey: strings.Trim(string(privkeyBytes), "\n"),
 		Username:   conf.Username,
 	})
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 
+}
+
+func xdgUserHome() string {
+	return path.Join("/home", os.Getenv("USER"), ".config", "yosai.json")
 }
 
 const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
@@ -53,6 +63,10 @@ func main() {
 	envFile := flag.String("env", "./.env", "Pass an environment variable file to this flag. Default's to '.env' in the CWD")
 	configInit := flag.Bool("config-init", false, "pass this to create a blank config at ./.config.tmpl")
 	envInit := flag.Bool("env-init", false, "pass this to create a blank env file at ./.env.tmpl")
+	configServerPort := flag.String("config-server-port", "8080", "Specify the port to reach the config server at. defaults to 8080")
+	configServerAddr := flag.String("config-server-addr", "localhost", "Specify the network address to reach the config server at. Defaults to localhost")
+	configServerProto := flag.String("config-server-proto", "http", "Specify the protocol to contact the config server with, e.g. http,https,yosai. Defaults to http")
+	configFileLoc := flag.String("config-file-loc", xdgUserHome(), "Pass a configuration file in a non-default location. Defaults to /home/$USER/.config/yosai.json")
 	flag.Parse()
 	if *configInit {
 		err := config.BlankConfig("./.config.tmpl")
@@ -79,14 +93,18 @@ func main() {
 		config.ConfigModeArg:        *configMode,
 		config.UsernameArg:          *username,
 		config.SecretsBackendKeyArg: *secretsBackendKey,
+		config.ConfigServerAddr:     *configServerAddr,
+		config.ConfigServerPort:     *configServerPort,
+		config.ConfigServerProto:    *configServerProto,
+		config.ConfigFileLoc:        *configFileLoc,
 	}
 	var configIO config.DaemonConfigIO
 	startupData := config.Turnkey(startupArgs)
 	switch startupData.ConfigurationMode {
 	case "server":
-		configIO = config.NewConfigServerImpl("192.168.50.35:8080", "http")
+		configIO = config.NewConfigServerImpl(startupData.ConfigServerAddr, startupData.ConfigServerPort, startupData.ConfigServerProto)
 	case "host":
-		configIO = config.NewConfigHostImpl("/home/aeth/.config/yosai.json")
+		configIO = config.NewConfigHostImpl(startupData.ConfigFileLoc)
 	default:
 		fmt.Println("unknown configuration mode: ", startupData.ConfigurationMode, " passed.")
 		os.Exit(199)
@@ -111,15 +129,12 @@ func main() {
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
 	_, err = apikeyring.GetKey(keytags.SYSTEM_SSH_KEYNAME)
 	if err != nil {
-		GetSshKeyPrompt(apikeyring, *conf)
+		GetSshKeyPrompt(hashiConn, *conf)
 	}
 	err = apikeyring.Bootstrap()
 	if err != nil {
 		log.Fatal(err)
 
-	}
-	for _, key := range apikeyring.Keys {
-		fmt.Println(key.GetType(), key.Prepare())
 	}
 	// creating the connection client with Hashicorp vault, and using the keyring we created above
 	// as this clients keyring. This allows the API key we added earlier to be used when calling the API

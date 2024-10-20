@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"git.aetherial.dev/aeth/yosai/pkg/config"
 	configserver "git.aetherial.dev/aeth/yosai/pkg/config-server"
@@ -28,11 +29,23 @@ func main() {
 	}
 
 	dbhost := os.Getenv("DB_HOST")
+	dbport := os.Getenv("DB_PORT")
 	dbuser := os.Getenv("DB_USER")
 	dbpassword := os.Getenv("DB_PASS")
 	dbname := "postgres"
 
-	connectionString := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", dbuser, dbpassword, dbhost, dbname)
+	var portInt int
+	portInt, err := strconv.Atoi(dbport)
+	if err != nil {
+		fmt.Println("An unuseable port was passed: '", dbport, "', defaulting to postgres default of 5432")
+		portInt = 5432
+	}
+	if portInt < 0 || portInt > 65535 {
+		fmt.Println("An unuseable port was passed: '", dbport, "', defaulting to postgres default of 5432")
+		portInt = 5432
+	}
+
+	connectionString := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", dbuser, dbpassword, dbhost, dbport, dbname)
 	fmt.Print(connectionString)
 	db, err := sql.Open("postgres", connectionString)
 	if err != nil {

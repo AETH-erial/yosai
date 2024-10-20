@@ -570,16 +570,18 @@ func (c ConfigHostImpl) Save(config Configuration) error {
 
 }
 
-func NewConfigServerImpl(hostname string, serverProto string) ConfigServerImpl {
+func NewConfigServerImpl(host string, port int, serverProto string) ConfigServerImpl {
 	return ConfigServerImpl{
 		http:  http.Client{},
-		addr:  net.NS{Host: hostname},
+		addr:  net.NS{Host: host},
+		port:  port,
 		proto: serverProto}
 }
 
 type ConfigServerImpl struct {
 	http  http.Client
 	addr  net.NS
+	port  int
 	proto string
 }
 
@@ -612,7 +614,7 @@ Agnostic GET call
 	:param path: the path to attach to the HTTP server
 */
 func (s ConfigServerImpl) get(path string) ([]byte, error) {
-	url := fmt.Sprintf("%s://%s%s", s.proto, s.addr.Host, path)
+	url := fmt.Sprintf("%s://%s:%d%s", s.proto, s.addr.Host, s.port, path)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -642,7 +644,7 @@ func (s ConfigServerImpl) post(body interface{}, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	url := fmt.Sprintf("%s://%s%s", s.proto, s.addr.Host, path)
+	url := fmt.Sprintf("%s://%s:%d%s", s.proto, s.addr.Host, s.port, path)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(b))
 	if err != nil {
 		return nil, err
@@ -804,12 +806,20 @@ const (
 	ConfigModeArg        StartupArgKeyname = "CONFIG_MODE"
 	UsernameArg                            = "USERNAME"
 	SecretsBackendKeyArg                   = "SECRET_BACKEND_KEY"
+	ConfigServerAddr                       = "YOSAI_CONFIG_SERVER_ADDR"
+	ConfigServerPort                       = "YOSAI_CONFIG_SERVER_PORT"
+	ConfigServerProto                      = "YOSAI_CONFIG_SERVER_PROTO"
+	ConfigFileLoc                          = "YOSAI_CONFIG_FILE_LOC"
 )
 
 type StartupRequirements struct {
 	ConfigurationMode string
 	Username          string
 	SecretsBackendKey string
+	ConfigServerPort  int
+	ConfigServerAddr  string
+	ConfigServerProto string
+	ConfigFileLoc     string
 }
 
 /*
@@ -842,12 +852,19 @@ func Turnkey(args map[StartupArgKeyname]string) StartupRequirements {
 		ConfigModeArg:        "",
 		UsernameArg:          "",
 		SecretsBackendKeyArg: "",
+		ConfigServerAddr:     "",
+		ConfigServerPort:     "",
+		ConfigServerProto:    "",
+		ConfigFileLoc:        "",
 	}
 	fromEnv := map[StartupArgKeyname]string{
 		ConfigModeArg:        os.Getenv(string(ConfigModeArg)),
 		UsernameArg:          os.Getenv(string(UsernameArg)),
 		SecretsBackendKeyArg: os.Getenv(string(SecretsBackendKeyArg)),
-	}
+		ConfigServerAddr:     os.Getenv(string(ConfigServerAddr)),
+		ConfigServerProto:    os.Getenv(string(ConfigServerProto)),
+		ConfigServerPort:     os.Getenv(string(ConfigServerPort)),
+		ConfigFileLoc:        os.Getenv(string(ConfigFileLoc))}
 	for i := range args {
 		if args[i] == "" {
 			continue
@@ -873,10 +890,23 @@ func Turnkey(args map[StartupArgKeyname]string) StartupRequirements {
 	if len(missingValues) != 0 {
 		getUserInput(cfg, missingValues)
 	}
+	portInt, err := strconv.Atoi(cfg[ConfigServerPort])
+	if err != nil {
+		fmt.Println("A non-parseable value: '", cfg[ConfigServerPort], "' was passed in. Please check your inputs. Defaulting to 8080")
+		portInt = 8080
+	}
+	if portInt < 0 || portInt > 65535 {
+		fmt.Println("An unuseable port was passed: '", portInt, "', defaultint to 8080")
+		portInt = 8080
+	}
 
 	return StartupRequirements{
 		ConfigurationMode: cfg[ConfigModeArg],
 		Username:          cfg[UsernameArg],
 		SecretsBackendKey: cfg[SecretsBackendKeyArg],
+		ConfigServerAddr:  cfg[ConfigServerAddr],
+		ConfigServerProto: cfg[ConfigServerProto],
+		ConfigServerPort:  portInt,
+		ConfigFileLoc:     cfg[ConfigFileLoc],
 	}
 }

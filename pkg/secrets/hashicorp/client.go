@@ -136,11 +136,11 @@ Add the root users for your VPS to Hashicorp vault
 */
 func (v VaultConnection) AddKey(name string, key keyring.Key) error {
 	body := VaultAdd{
-		Data: VaultItem{Public: key.GetPublic(), Secret: key.GetSecret(), Type: key.GetType()},
+		Data: VaultItem{Public: key.GetPublic(), Secret: key.GetSecret(), Type: key.GetType(), Username: key.Owner()},
 	}
 	b, err := json.Marshal(&body)
 	if err != nil {
-		return err
+		return &HashicorpClientError{Msg: "Couldnt unmarshal the key into JSON: " + err.Error()}
 	}
 	vaultBase := fmt.Sprintf("%s://%s/%s/%s", v.HttpProto, v.VaultUrl, SecretsApiPath, name)
 	req, err := http.NewRequest("POST", vaultBase, bytes.NewReader(b))
@@ -159,7 +159,7 @@ func (v VaultConnection) AddKey(name string, key keyring.Key) error {
 
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode > 299 {
 		return &HashicorpClientError{Msg: resp.Status}
 	}
 	return nil

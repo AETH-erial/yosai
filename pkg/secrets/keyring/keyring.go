@@ -218,7 +218,7 @@ func (a *ApiKeyRing) GetKey(name string) (Key, error) {
 					continue
 				}
 				if errors.Is(err, KeyRingError) {
-					a.Log("Error getting key:", name, err.Error())
+					a.Log("Error with the actual keyring while getting key:", name, err.Error(), "from: ", a.Rungs[i].Source())
 					return key, err
 				}
 				a.Log("Unhandled exception getting key: ", name, err.Error())
