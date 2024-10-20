@@ -145,16 +145,17 @@ type NewRepoResponse struct {
 }
 
 type AddKeyRequest struct {
-	Name          string        `json:"name"`
-	Type          string        `json:"type"`
-	ProjectId     int           `json:"project_id"`
-	LoginPassword loginPassword `json:"login_password"`
-	Ssh           sshKeyAdd     `json:"ssh"`
+	Name          string          `json:"name"`
+	Type          keyring.KeyType `json:"type"`
+	Username      config.Username `json:"username"`
+	ProjectId     int             `json:"project_id"`
+	LoginPassword loginPassword   `json:"login_password"`
+	Ssh           sshKeyAdd       `json:"ssh"`
 }
 
 func (a AddKeyRequest) GetPublic() string {
 	if a.Type == "ssh" {
-		return a.Ssh.Login
+		return a.Ssh.PublicKey
 	} else {
 		return a.LoginPassword.Login
 	}
@@ -175,18 +176,22 @@ func (a AddKeyRequest) Prepare() string {
 	}
 	return string(b)
 }
+func (a AddKeyRequest) Owner() config.Username {
+	return a.Username
+}
 
-func (a AddKeyRequest) GetType() string {
+func (a AddKeyRequest) GetType() keyring.KeyType {
 	return a.Type
 }
 
 type KeyItemResponse struct {
-	Id            int           `json:"id"`
-	Name          string        `json:"name"`
-	Type          string        `json:"type"`
-	ProjectId     int           `json:"project_id"`
-	LoginPassword loginPassword `json:"login_password"`
-	Ssh           sshKeyAdd     `json:"ssh"`
+	Id            int             `json:"id"`
+	Name          string          `json:"name"`
+	Type          keyring.KeyType `json:"type"`
+	Username      config.Username `json:"username"`
+	ProjectId     int             `json:"project_id"`
+	LoginPassword loginPassword   `json:"login_password"`
+	Ssh           sshKeyAdd       `json:"ssh"`
 }
 
 type NewInventoryRequest struct {
@@ -214,16 +219,19 @@ type InventoryResponse struct {
 */
 
 func (k KeyItemResponse) GetPublic() string {
-	return k.Ssh.Login
+	return k.Ssh.PublicKey
 }
 func (k KeyItemResponse) GetSecret() string {
 	return k.Ssh.PrivateKey
 }
 func (k KeyItemResponse) Prepare() string {
+	return k.Name
+}
+func (k KeyItemResponse) GetType() keyring.KeyType {
 	return k.Type
 }
-func (k KeyItemResponse) GetType() string {
-	return k.Type
+func (k KeyItemResponse) Owner() config.Username {
+	return k.Username
 }
 
 type loginPassword struct {
@@ -231,8 +239,9 @@ type loginPassword struct {
 	Login    string `json:"login"`
 }
 type sshKeyAdd struct {
-	PrivateKey string `json:"private_key"`
-	Login      string `json:"login"`
+	PrivateKey string          `json:"private_key"`
+	PublicKey  string          `json:"public_key"`
+	Login      config.Username `json:"login"`
 }
 
 /*
@@ -294,13 +303,13 @@ func (s SemaphoreConnection) Source() string {
 
 // NewKeyRequest builder function
 func (s SemaphoreConnection) NewKeyRequestBuilder(name string, key keyring.Key) keyring.Key {
-	if key.GetType() == "ssh" {
+	if key.GetType() == keyring.SSH_KEY {
 		return AddKeyRequest{
 			Name:      name,
 			Type:      key.GetType(),
 			ProjectId: s.ProjectId,
 			Ssh: sshKeyAdd{
-				Login:      key.GetPublic(),
+				Login:      key.Owner(),
 				PrivateKey: key.GetSecret(),
 			},
 		}
@@ -418,7 +427,7 @@ func (s SemaphoreConnection) AddRepository(giturl string, branch string) error {
 	if err == nil { // return if the repo exists
 		return nil
 	}
-	sshKeyId, err := s.GetKeyId(s.KeyTagger.GitSshKeyname())
+	sshKeyId, err := s.GetKeyId(s.KeyTagger.SystemSshKeyname())
 	if err != nil {
 		return err
 	}
@@ -694,7 +703,7 @@ func (s SemaphoreConnection) AddInventory(name string) error {
 	if err == nil { // Returning on nil error because that means the inventory exists
 		return &SemaphoreClientError{Msg: "Inventory Exists! Please update rather than create a new."}
 	}
-	sshKeyId, err := s.GetKeyId(s.KeyTagger.VpsSvcAccSshPubkeySeed())
+	sshKeyId, err := s.GetKeyId(s.KeyTagger.SystemSshKeyname())
 	if err != nil {
 		return err
 	}
@@ -764,7 +773,7 @@ func (s SemaphoreConnection) GetAllInventories() ([]InventoryResponse, error) {
 Update an inventory
 */
 func (s SemaphoreConnection) UpdateInventory(name string, inv YamlInventory) error {
-	sshKeyId, err := s.GetKeyId(s.KeyTagger.VpsSvcAccSshPubkeySeed())
+	sshKeyId, err := s.GetKeyId(s.KeyTagger.SystemSshKeyname())
 	if err != nil {
 		return err
 	}

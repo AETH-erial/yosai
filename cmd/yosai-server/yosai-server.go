@@ -15,6 +15,7 @@ import (
 
 func main() {
 	envFile := flag.String("env", "", "pass this to read an env file")
+	username := flag.String("username", "", "The username to seed the db with, only has affect when calling with the --seed flag")
 	dbSeed := flag.String("seed", "", "Pass this to seed the database with a configuration file")
 	flag.Parse()
 	if *envFile == "" {
@@ -50,9 +51,12 @@ func main() {
 
 	configServerDb.Migrate()
 	if *dbSeed != "" {
-		conf := config.NewConfiguration(os.Stdout, config.ValidateUsername("aeth"))
+		if *username == "" {
+			log.Fatal("Blank username not accepted. Use the --username flag to pass in a username to seed the database with")
+		}
+		conf := config.NewConfiguration(os.Stdout, config.ValidateUsername(*username))
 		config.NewConfigHostImpl("./.config.json").Propogate(conf)
-		user, err := configServerDb.AddUser(config.ValidateUsername("aeth"))
+		user, err := configServerDb.AddUser(config.ValidateUsername(*username))
 		if err != nil {
 			log.Fatal(err.Error(), "failed to add user")
 		}

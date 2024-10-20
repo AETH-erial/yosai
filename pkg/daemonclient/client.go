@@ -16,6 +16,7 @@ import (
 	"git.aetherial.dev/aeth/yosai/pkg/daemon"
 	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
+	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
 )
 
@@ -112,7 +113,7 @@ Wraps the creation of a request to add to the keyring
 */
 
 func keyringRequstBuilder(argMap map[string]string) []byte {
-	b, _ := json.Marshal(hashicorp.VaultItem{Public: argMap["public"], Secret: argMap["secret"], Type: argMap["type"], Name: argMap["name"]})
+	b, _ := json.Marshal(hashicorp.VaultItem{Public: argMap["public"], Secret: argMap["secret"], Type: keyring.AssertKeytype(argMap["type"]), Name: argMap["name"]})
 	return b
 
 }

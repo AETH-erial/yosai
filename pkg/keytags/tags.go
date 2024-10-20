@@ -5,10 +5,8 @@ type Keytagger interface {
 	LinodeApiKeyname() string         // Returns the Linode API key's name
 	VpsRootKeyname() string           // Returns the VPS Root user credentials name
 	VpsSvcAccKeyname() string         // Returns the VPS service account credentials name
-	VpsSvcAccSshKeyname() string      // returns the VPS service account's SSH key name
-	VpsSvcAccSshPubkeySeed() string   // Returns the key pair to populate the VPS ssh config with, i.e. the username and pubkey
+	SystemSshKeyname() string         // get the ssh key name for the system
 	SemaphoreApiKeyname() string      // Returns the Semaphore API key name
-	GitSshKeyname() string            // Returns the name of the SSH key used to pull from the git server
 	WgKeypairKeyname() string         // returns the keyname of the Wireguard server keypair
 	AllKeys() []string                // Returns all of the key names
 	GetAnsibleKeys() []string         // Returns all the keynames that need to be added to Semaphore
@@ -27,13 +25,13 @@ func (c ConstKeytag) SemaphoreApiKeyname() string    { return SEMAPHORE_API_KEYN
 func (c ConstKeytag) GitSshKeyname() string          { return GIT_SSH_KEYNAME }
 func (c ConstKeytag) VpsSvcAccSshPubkeySeed() string { return VPS_PUBKEY_SEED_KEYNAME }
 func (c ConstKeytag) WgKeypairKeyname() string       { return WG_KEYPAIR_KEYNAME }
+func (c ConstKeytag) SystemSshKeyname() string       { return SYSTEM_SSH_KEYNAME }
 func (c ConstKeytag) GetAnsibleKeys() []string {
 	return []string{
-		GIT_SSH_KEYNAME,
+
+		SYSTEM_SSH_KEYNAME,
 		VPS_ROOT_PASS_KEYNAME,
 		VPS_SUDO_USER_KEYNAME,
-		VPS_SSH_KEY_KEYNAME,
-		VPS_PUBKEY_SEED_KEYNAME,
 	}
 }
 func (c ConstKeytag) AllKeys() []string {
@@ -42,9 +40,8 @@ func (c ConstKeytag) AllKeys() []string {
 		c.LinodeApiKeyname(),
 		c.VpsRootKeyname(),
 		c.VpsSvcAccKeyname(),
-		c.VpsSvcAccSshKeyname(),
+		c.SystemSshKeyname(),
 		c.SemaphoreApiKeyname(),
-		c.GitSshKeyname(),
 		//		c.WgKeypairKeyname(),
 	}
 }
@@ -100,3 +97,4 @@ const SEMAPHORE_API_KEYNAME = "SEMAPHORE_API_KEY"
 const GIT_SSH_KEYNAME = "GIT_SSH_KEY"
 const VPS_PUBKEY_SEED_KEYNAME = "VPS_PUBKEY_SEED"
 const WG_KEYPAIR_KEYNAME = "WG_KEYPAIR"
+const SYSTEM_SSH_KEYNAME = "SYSTEM_SSH_KEYNAME"

@@ -13,19 +13,43 @@ import (
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 )
 
+type KeyType string
+
+func AssertKeytype(v string) KeyType {
+	switch v {
+	case "ssh":
+		return SSH_KEY
+	case "api_key":
+		return API_KEY
+	case "bearer_auth":
+		return BEARER_AUTH
+	case "basic_auth":
+		return BASIC_AUTH
+	case "login_password":
+		return LOGIN_CRED
+	case "wireguard":
+		return WIREGUARD
+	default:
+		log.Fatal("Pivotal system component has failed, 'Keyring' was passed an invalid keytype: ", v)
+		return SSH_KEY
+	}
+
+}
+
 const (
-	SSH_KEY            = "ssh"
-	API_KEY            = "api_key"
-	BEARER_AUTH        = "bearer_auth"
-	CLIENT_CREDENTIALS = "client_credentials"
-	BASIC_AUTH         = "basic_auth"
-	LOGIN_CRED         = "login_password"
-	WIREGUARD          = "wireguard"
+	SSH_KEY            KeyType = "ssh"
+	API_KEY            KeyType = "api_key"
+	BEARER_AUTH        KeyType = "bearer_auth"
+	CLIENT_CREDENTIALS KeyType = "client_credentials"
+	BASIC_AUTH         KeyType = "basic_auth"
+	LOGIN_CRED         KeyType = "login_password"
+	WIREGUARD          KeyType = "wireguard"
 )
 
 type WireguardKeypair struct {
 	PrivateKey string
 	PublicKey  string
+	Username   string
 }
 
 func (w WireguardKeypair) GetPublic() string {
@@ -37,8 +61,12 @@ func (w WireguardKeypair) GetSecret() string {
 func (w WireguardKeypair) Prepare() string {
 	return ""
 }
-func (w WireguardKeypair) GetType() string {
+func (w WireguardKeypair) GetType() KeyType {
 	return WIREGUARD
+}
+
+func (w WireguardKeypair) Owner() config.Username {
+	return config.ValidateUsername(w.Username)
 }
 
 type VpsRootUser struct {
@@ -47,7 +75,8 @@ type VpsRootUser struct {
 }
 
 type BearerAuth struct {
-	Secret string // Likely would be the API key for the API
+	Username config.Username
+	Secret   string // Likely would be the API key for the API
 }
 
 /*
@@ -71,7 +100,11 @@ func (b BearerAuth) GetSecret() string {
 	return b.Secret
 }
 
-func (b BearerAuth) GetType() string {
+func (b BearerAuth) Owner() config.Username {
+	return b.Username
+}
+
+func (b BearerAuth) GetType() KeyType {
 	return BEARER_AUTH
 }
 
@@ -102,7 +135,7 @@ func (b BasicAuth) GetSecret() string {
 	return b.Password
 }
 
-func (b BasicAuth) GetType() string {
+func (b BasicAuth) GetType() KeyType {
 	return BASIC_AUTH
 }
 
@@ -132,17 +165,18 @@ func (c ClientCredentials) GetPublic() string {
 func (c ClientCredentials) GetSecret() string {
 	return c.ClientSecret
 }
-func (c ClientCredentials) GetType() string {
+func (c ClientCredentials) GetType() KeyType {
 	return CLIENT_CREDENTIALS
 }
 
 type SshKey struct {
-	User       string
+	Username   config.Username
+	PublicKey  string
 	PrivateKey string
 }
 
 func (s SshKey) GetPublic() string {
-	return s.User
+	return s.PublicKey
 }
 func (s SshKey) GetSecret() string {
 	return s.PrivateKey
@@ -150,7 +184,10 @@ func (s SshKey) GetSecret() string {
 func (s SshKey) Prepare() string {
 	return s.PrivateKey
 }
-func (s SshKey) GetType() string {
+func (s SshKey) Owner() config.Username {
+	return s.Username
+}
+func (s SshKey) GetType() KeyType {
 	return SSH_KEY
 }
 
@@ -386,9 +423,10 @@ type Key interface {
 	// This function is supposed to return the payload for the given key type according to its RFC
 	// i.e. if the 'type' is Bearer, then it returns a string with 'Bearer tokencode123456xyz'
 	Prepare() string
-	GetPublic() string // Get the public identifier of the key, i.e. the username, or client id, etc.
-	GetSecret() string // Get the private/secret data, i.e. the password, API key, client secret, etc
-	GetType() string   // Returns the type of key. I.e. API_KEY, SSH_KEY, BASIC_AUTH, etc
+	GetPublic() string      // Get the public identifier of the key, i.e. the username, or client id, etc.
+	GetSecret() string      // Get the private/secret data, i.e. the password, API key, client secret, etc
+	Owner() config.Username // returns the owning username
+	GetType() KeyType       // Returns the type of key. I.e. API_KEY, SSH_KEY, BASIC_AUTH, etc
 }
 
 /*

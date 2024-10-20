@@ -96,10 +96,11 @@ func NewLinodeBodyBuilder(image string, region string, linodeType string, label 
 	if err != nil {
 		return newLnBody, &LinodeClientError{Msg: err.Error()}
 	}
-	rootSshKey, err := keyring.GetKey(keytags.VPS_SSH_KEY_KEYNAME)
+	rootSshKey, err := keyring.GetKey(keytags.SYSTEM_SSH_KEYNAME)
 	if err != nil {
 		return newLnBody, &LinodeClientError{Msg: err.Error()}
 	}
+	fmt.Println(rootSshKey.GetPublic())
 
 	return NewLinodeBody{AuthorizedKeys: []string{rootSshKey.GetPublic()},
 		Label:    label,

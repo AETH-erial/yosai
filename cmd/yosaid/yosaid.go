@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"git.aetherial.dev/aeth/yosai/pkg/cloud/linode"
 	"git.aetherial.dev/aeth/yosai/pkg/config"
@@ -15,11 +17,40 @@ import (
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/hashicorp"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
 	"git.aetherial.dev/aeth/yosai/pkg/semaphore"
+	"github.com/joho/godotenv"
 )
+
+func GetSshKeyPrompt(daemonKeyring keyring.DaemonKeyRing, conf config.Configuration) {
+	fmt.Print("Enter the full path of the ssh key to use for your daemon: ")
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		log.Fatal(err)
+	}
+	keypath := strings.Trim(line, "\n")
+	pubkeyBytes, err := os.ReadFile(keypath + ".pub")
+	if err != nil {
+		log.Fatal("Error reading the public key: ", err)
+	}
+	privkeyBytes, err := os.ReadFile(keypath)
+	if err != nil {
+		log.Fatal("Error reading the private key: ", err)
+	}
+	daemonKeyring.AddKey(keytags.SYSTEM_SSH_KEYNAME, keyring.SshKey{
+		PublicKey:  strings.Trim(string(pubkeyBytes), "\n"),
+		PrivateKey: strings.Trim(string(privkeyBytes), "\n"),
+		Username:   conf.Username,
+	})
+
+}
 
 const UNIX_DOMAIN_SOCK_PATH = "/tmp/yosaid.sock"
 
 func main() {
+	configMode := flag.String("config-mode", "", "Specify the configuration mode to run the daemon as, i.e. 'server' or 'host'")
+	username := flag.String("username", "", "This is the username to run the daemon as. Usually only applicable if using a configuration server")
+	secretsBackendKey := flag.String("secrets-backend-key", "", "This is the API key for the secret backend")
+	envFile := flag.String("env", "./.env", "Pass an environment variable file to this flag. Default's to '.env' in the CWD")
 	configInit := flag.Bool("config-init", false, "pass this to create a blank config at ./.config.tmpl")
 	envInit := flag.Bool("env-init", false, "pass this to create a blank env file at ./.env.tmpl")
 	flag.Parse()
@@ -40,21 +71,36 @@ func main() {
 		fmt.Println("Blank env file created at ./.env.tmpl")
 		os.Exit(0)
 	}
-	err := config.LoadAndVerifyEnv("./.env", config.EnvironmentVariables)
+	err := godotenv.Load(*envFile)
 	if err != nil {
-		log.Fatal("Error loading env file: ", err)
+		fmt.Println("Couldn't find an env file in the current directory. Relying on program startup sequence to provide initial configuration")
 	}
-	configServer := config.NewConfigServerImpl("192.168.50.35:8080", "http")
-	conf := config.NewConfiguration(os.Stdout, "aeth")
-	configServer.Propogate(conf)
-	fmt.Printf("config gotten: %+v\n", conf)
-	conf.SetConfigIO(configServer)
+	startupArgs := map[config.StartupArgKeyname]string{
+		config.ConfigModeArg:        *configMode,
+		config.UsernameArg:          *username,
+		config.SecretsBackendKeyArg: *secretsBackendKey,
+	}
+	var configIO config.DaemonConfigIO
+	startupData := config.Turnkey(startupArgs)
+	switch startupData.ConfigurationMode {
+	case "server":
+		configIO = config.NewConfigServerImpl("192.168.50.35:8080", "http")
+	case "host":
+		configIO = config.NewConfigHostImpl("/home/aeth/.config/yosai.json")
+	default:
+		fmt.Println("unknown configuration mode: ", startupData.ConfigurationMode, " passed.")
+		os.Exit(199)
+	}
+	conf := config.NewConfiguration(os.Stdout, config.ValidateUsername(startupData.Username))
+	configIO.Propogate(conf)
+	conf.SetConfigIO(configIO)
 	conf.SetStreamIO(os.Stdout)
 	apikeyring := keyring.NewKeyRing(conf, keytags.ConstKeytag{})
 	// Here we are demonstrating how you add a key to a keyring, in this
 	// case it is the top level keyring.
 	apikeyring.AddKey(keytags.HASHICORP_VAULT_KEYNAME, keyring.BearerAuth{
-		Secret: os.Getenv(keytags.HASHICORP_VAULT_KEYNAME),
+		Secret:   startupData.SecretsBackendKey,
+		Username: config.ValidateUsername(startupData.Username),
 	})
 	hashiConn := hashicorp.VaultConnection{
 		VaultUrl:  conf.Service.SecretsBackendUrl,
@@ -63,10 +109,17 @@ func main() {
 		Client:    &http.Client{},
 	}
 	apikeyring.Rungs = append(apikeyring.Rungs, hashiConn)
+	_, err = apikeyring.GetKey(keytags.SYSTEM_SSH_KEYNAME)
+	if err != nil {
+		GetSshKeyPrompt(apikeyring, *conf)
+	}
 	err = apikeyring.Bootstrap()
 	if err != nil {
 		log.Fatal(err)
 
+	}
+	for _, key := range apikeyring.Keys {
+		fmt.Println(key.GetType(), key.Prepare())
 	}
 	// creating the connection client with Hashicorp vault, and using the keyring we created above
 	// as this clients keyring. This allows the API key we added earlier to be used when calling the API

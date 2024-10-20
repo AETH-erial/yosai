@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -790,4 +791,93 @@ func GetNetworkAddresses(addr string) (*IpSubnetMapper, error) {
 
 	return ipmap, nil
 
+}
+
+/*
+##########################################
+##### Initial daemon startup helpers #####
+##########################################
+*/
+
+type StartupArgKeyname string
+
+const (
+	ConfigModeArg        StartupArgKeyname = "CONFIG_MODE"
+	UsernameArg                            = "USERNAME"
+	SecretsBackendKeyArg                   = "SECRET_BACKEND_KEY"
+)
+
+type StartupRequirements struct {
+	ConfigurationMode string
+	Username          string
+	SecretsBackendKey string
+}
+
+/*
+Grab user input for values passed via 'missing', and set the startup data configuration map with the value supplied
+
+	    :param cfg: a map that holds the data required to start the daemon
+		:param missing: a map of missing values that the function can use to index the cfg struct
+*/
+func getUserInput(cfg map[StartupArgKeyname]string, missing []StartupArgKeyname) {
+	for i := range missing {
+		fmt.Print(missing[i], ":")
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg[missing[i]] = strings.Trim(line, "\n")
+
+	}
+}
+
+/*
+Pass in a map of arguments supplied from program flags, and this function will attempt to try a
+variety of different sources to fill in the gaps, i.e. environment vars, user input
+
+	:param args: the argument map, likely called from the main function.
+*/
+func Turnkey(args map[StartupArgKeyname]string) StartupRequirements {
+	cfg := map[StartupArgKeyname]string{
+		ConfigModeArg:        "",
+		UsernameArg:          "",
+		SecretsBackendKeyArg: "",
+	}
+	fromEnv := map[StartupArgKeyname]string{
+		ConfigModeArg:        os.Getenv(string(ConfigModeArg)),
+		UsernameArg:          os.Getenv(string(UsernameArg)),
+		SecretsBackendKeyArg: os.Getenv(string(SecretsBackendKeyArg)),
+	}
+	for i := range args {
+		if args[i] == "" {
+			continue
+		}
+		cfg[i] = args[i]
+	}
+	for i := range fromEnv {
+		if fromEnv[i] == "" {
+			continue
+		}
+		if cfg[i] != "" {
+			fmt.Println("Overwriting value: ", i, " from set environment variable.")
+		}
+		cfg[i] = fromEnv[i]
+	}
+	var missingValues []StartupArgKeyname
+	for i := range cfg {
+		if cfg[i] == "" {
+			fmt.Println("missing value for: ", i)
+			missingValues = append(missingValues, i)
+		}
+	}
+	if len(missingValues) != 0 {
+		getUserInput(cfg, missingValues)
+	}
+
+	return StartupRequirements{
+		ConfigurationMode: cfg[ConfigModeArg],
+		Username:          cfg[UsernameArg],
+		SecretsBackendKey: cfg[SecretsBackendKeyArg],
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	"git.aetherial.dev/aeth/yosai/pkg/config"
 	daemonproto "git.aetherial.dev/aeth/yosai/pkg/daemon-proto"
 	"git.aetherial.dev/aeth/yosai/pkg/keytags"
 	"git.aetherial.dev/aeth/yosai/pkg/secrets/keyring"
@@ -18,7 +19,7 @@ const (
 )
 
 type VaultAdd struct {
-	Data map[string]string `json:"data"`
+	Data VaultItem `json:"data"`
 }
 
 type VaultResponse struct {
@@ -30,10 +31,11 @@ type VaultResponseInner struct {
 }
 
 type VaultItem struct {
-	Name   string `json:"name"`
-	Public string `json:"public"`
-	Secret string `json:"secret"`
-	Type   string `json:"type"`
+	Name     string          `json:"name"`
+	Username config.Username `json:"username"`
+	Public   string          `json:"public"`
+	Secret   string          `json:"secret"`
+	Type     keyring.KeyType `json:"type"`
 }
 
 type VaultConnection struct {
@@ -43,16 +45,23 @@ type VaultConnection struct {
 	Client    *http.Client
 }
 
-func (v VaultItem) GetPublic() string { return v.Public }
-func (v VaultItem) GetSecret() string { return v.Secret }
-func (v VaultItem) GetType() string   { return v.Type }
+func (v VaultItem) GetPublic() string        { return v.Public }
+func (v VaultItem) GetSecret() string        { return v.Secret }
+func (v VaultItem) GetType() keyring.KeyType { return v.Type }
 func (v VaultItem) Prepare() string {
 	return "Unimplemented method"
+}
+func (v VaultItem) Owner() config.Username {
+	return v.Username
 }
 
 // Returns the 'public' field of the credential, i.e. a username or something
 func (v VaultResponse) GetPublic() string {
 	return v.Data.Data.Public
+}
+
+func (v VaultResponse) Owner() config.Username {
+	return v.Data.Data.Username
 }
 
 // returns the 'private' field of the credential, like the API key or password
@@ -76,7 +85,7 @@ func (v VaultResponse) Prepare() string {
 /*
 Implementing the daemon.Key interface and returning the keys 'type'
 */
-func (v VaultResponse) GetType() string {
+func (v VaultResponse) GetType() keyring.KeyType {
 	return v.Data.Data.Type
 }
 
@@ -127,7 +136,7 @@ Add the root users for your VPS to Hashicorp vault
 */
 func (v VaultConnection) AddKey(name string, key keyring.Key) error {
 	body := VaultAdd{
-		Data: map[string]string{"public": key.GetPublic(), "secret": key.GetSecret(), "type": key.GetType()},
+		Data: VaultItem{Public: key.GetPublic(), Secret: key.GetSecret(), Type: key.GetType()},
 	}
 	b, err := json.Marshal(&body)
 	if err != nil {
