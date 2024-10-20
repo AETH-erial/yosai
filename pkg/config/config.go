@@ -853,7 +853,6 @@ func Turnkey(args map[StartupArgKeyname]string) StartupRequirements {
 		UsernameArg:          "",
 		SecretsBackendKeyArg: "",
 		ConfigServerAddr:     "",
-		ConfigServerPort:     "",
 		ConfigServerProto:    "",
 		ConfigFileLoc:        "",
 	}
@@ -863,7 +862,6 @@ func Turnkey(args map[StartupArgKeyname]string) StartupRequirements {
 		SecretsBackendKeyArg: os.Getenv(string(SecretsBackendKeyArg)),
 		ConfigServerAddr:     os.Getenv(string(ConfigServerAddr)),
 		ConfigServerProto:    os.Getenv(string(ConfigServerProto)),
-		ConfigServerPort:     os.Getenv(string(ConfigServerPort)),
 		ConfigFileLoc:        os.Getenv(string(ConfigFileLoc))}
 	for i := range args {
 		if args[i] == "" {
@@ -890,15 +888,6 @@ func Turnkey(args map[StartupArgKeyname]string) StartupRequirements {
 	if len(missingValues) != 0 {
 		getUserInput(cfg, missingValues)
 	}
-	portInt, err := strconv.Atoi(cfg[ConfigServerPort])
-	if err != nil {
-		fmt.Println("A non-parseable value: '", cfg[ConfigServerPort], "' was passed in. Please check your inputs. Defaulting to 8080")
-		portInt = 8080
-	}
-	if portInt < 0 || portInt > 65535 {
-		fmt.Println("An unuseable port was passed: '", portInt, "', defaultint to 8080")
-		portInt = 8080
-	}
 
 	return StartupRequirements{
 		ConfigurationMode: cfg[ConfigModeArg],
@@ -906,7 +895,6 @@ func Turnkey(args map[StartupArgKeyname]string) StartupRequirements {
 		SecretsBackendKey: cfg[SecretsBackendKeyArg],
 		ConfigServerAddr:  cfg[ConfigServerAddr],
 		ConfigServerProto: cfg[ConfigServerProto],
-		ConfigServerPort:  portInt,
 		ConfigFileLoc:     cfg[ConfigFileLoc],
 	}
 }

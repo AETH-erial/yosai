@@ -63,7 +63,7 @@ func main() {
 	envFile := flag.String("env", "./.env", "Pass an environment variable file to this flag. Default's to '.env' in the CWD")
 	configInit := flag.Bool("config-init", false, "pass this to create a blank config at ./.config.tmpl")
 	envInit := flag.Bool("env-init", false, "pass this to create a blank env file at ./.env.tmpl")
-	configServerPort := flag.String("config-server-port", "8080", "Specify the port to reach the config server at. defaults to 8080")
+	configServerPort := flag.Int("config-server-port", 8080, "Specify the port to reach the config server at. defaults to 8080")
 	configServerAddr := flag.String("config-server-addr", "localhost", "Specify the network address to reach the config server at. Defaults to localhost")
 	configServerProto := flag.String("config-server-proto", "http", "Specify the protocol to contact the config server with, e.g. http,https,yosai. Defaults to http")
 	configFileLoc := flag.String("config-file-loc", xdgUserHome(), "Pass a configuration file in a non-default location. Defaults to /home/$USER/.config/yosai.json")
@@ -94,7 +94,6 @@ func main() {
 		config.UsernameArg:          *username,
 		config.SecretsBackendKeyArg: *secretsBackendKey,
 		config.ConfigServerAddr:     *configServerAddr,
-		config.ConfigServerPort:     *configServerPort,
 		config.ConfigServerProto:    *configServerProto,
 		config.ConfigFileLoc:        *configFileLoc,
 	}
@@ -102,7 +101,7 @@ func main() {
 	startupData := config.Turnkey(startupArgs)
 	switch startupData.ConfigurationMode {
 	case "server":
-		configIO = config.NewConfigServerImpl(startupData.ConfigServerAddr, startupData.ConfigServerPort, startupData.ConfigServerProto)
+		configIO = config.NewConfigServerImpl(startupData.ConfigServerAddr, *configServerPort, startupData.ConfigServerProto)
 	case "host":
 		configIO = config.NewConfigHostImpl(startupData.ConfigFileLoc)
 	default:
