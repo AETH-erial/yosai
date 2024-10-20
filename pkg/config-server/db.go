@@ -87,8 +87,7 @@ func (s *SQLiteRepo) Migrate() {
 	    user_id INTEGER NOT NULL,
 		name TEXT NOT NULL,
 		wan_ipv4 TEXT NOT NULL,
-		vpn_ipv4 TEXT NOT NULL,
-		port INTEGER NOT NULL  
+		vpn_ipv4 TEXT NOT NULL
 	);
 	`
 
@@ -307,12 +306,11 @@ func (s *SQLiteRepo) insertServer(user config.User, config config.Configuration,
 	}
 	for i := range config.Service.Servers {
 		server := config.Service.Servers[i]
-		_, err = trx.Exec("INSERT INTO servers(user_id, name, wan_ipv4, vpn_ipv4, port) values($1,$2,$3,$4,$5)",
+		_, err = trx.Exec("INSERT INTO servers(user_id, name, wan_ipv4, vpn_ipv4) values($1,$2,$3,$4)",
 			user.Id,
 			server.Name,
 			server.WanIpv4,
-			server.VpnIpv4.String(),
-			server.Port)
+			server.VpnIpv4.String())
 		if err != nil {
 			s.Log("Failed to create row: ", err.Error())
 			return err
@@ -468,7 +466,7 @@ func (s *SQLiteRepo) GetConfigByUser(username config.Username) (config.Configura
 	for rows.Next() {
 		var server config.VpnServer
 		var ipStr string
-		if err := rows.Scan(&user.Id, &server.Name, &server.WanIpv4, &ipStr, &server.Port); err != nil {
+		if err := rows.Scan(&user.Id, &server.Name, &server.WanIpv4, &ipStr); err != nil {
 			return *cfg, err
 		}
 		s.Log(ipStr)

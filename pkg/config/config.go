@@ -172,7 +172,7 @@ func (c *Configuration) AddServerHandler(msg daemonproto.SockMessage) daemonprot
 	if err != nil {
 		return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_FAILED, []byte(err.Error()))
 	}
-	name := c.AddServer(addr, req.Name, req.WanIpv4, req.Port)
+	name := c.AddServer(addr, req.Name, req.WanIpv4)
 	c.Log("address: ", addr.String(), "name:", name)
 	return *daemonproto.NewSockMessage(daemonproto.MsgResponse, daemonproto.REQUEST_OK, []byte("Server: "+name+" Successfully added."))
 }
@@ -330,7 +330,7 @@ Add a VPN server to the Service configuration
 
 	:param server: a VpnServer struct modeling the data that comprises of a VPN server
 */
-func (c *Configuration) AddServer(addr net.IP, name string, wan string, port int) string {
+func (c *Configuration) AddServer(addr net.IP, name string, wan string) string {
 	server, ok := c.Service.Servers[name]
 	var serverLabel string
 	if ok {
@@ -338,7 +338,7 @@ func (c *Configuration) AddServer(addr net.IP, name string, wan string, port int
 	} else {
 		serverLabel = name
 	}
-	c.Service.Servers[serverLabel] = VpnServer{Name: serverLabel, WanIpv4: wan, VpnIpv4: addr, Port: port}
+	c.Service.Servers[serverLabel] = VpnServer{Name: serverLabel, WanIpv4: wan, VpnIpv4: addr}
 	return serverLabel
 
 }
@@ -354,7 +354,6 @@ type VpnServer struct {
 	Name    string `json:"name"`     // this Label is what is used to index that server and its data within the Daemons model of the VPN environment
 	WanIpv4 string `json:"wan_ipv4"` // Public IPv4
 	VpnIpv4 net.IP `json:"vpn_ipv4"` // the IP address that the server will occupy on the network
-	Port    int    `json:"port"`
 }
 
 /*

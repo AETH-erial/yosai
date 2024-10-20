@@ -1389,7 +1389,7 @@ func (s SemaphoreConnection) YamlInventoryBuilder(hosts []config.VpnServer) Yaml
 			MachineType:          "vpn",
 			MachineSubType:       "server",
 			VpnNetworkAddress:    server.VpnIpv4.String(),
-			VpnServerPort:        server.Port,
+			VpnServerPort:        s.Config.Service.VpnServerPort,
 			Clients:              clientmap,
 			SecretsProvider:      s.Config.Service.SecretsBackend,
 			VpnNetMask:           s.Config.Service.VpnMask,

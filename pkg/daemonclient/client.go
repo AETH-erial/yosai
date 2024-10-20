@@ -92,7 +92,7 @@ func serverAddRequestBuilder(argMap map[string]string) []byte {
 		log.Fatal("Port passed: ", port, " Was not in the valid range of between 1-65535.")
 	}
 
-	b, _ := json.Marshal(config.VpnServer{WanIpv4: argMap["wan"], Port: port, Name: argMap["name"]})
+	b, _ := json.Marshal(config.VpnServer{WanIpv4: argMap["wan"], Name: argMap["name"]})
 
 	return b
 }
@@ -225,8 +225,7 @@ func (d DaemonClient) NewServer(name string) error {
 		return err
 	}
 	// add server data to daemonproto configuration
-	conf := d.GetConfig()
-	b, _ := json.Marshal(config.VpnServer{WanIpv4: ipv4, Name: name, Port: conf.Service.VpnServerPort})
+	b, _ := json.Marshal(config.VpnServer{WanIpv4: ipv4, Name: name})
 	resp := d.Call(b, "config-server", "add")
 	if resp.StatusCode != daemonproto.REQUEST_OK {
 		return &DaemonClientError{SockMsg: resp}
