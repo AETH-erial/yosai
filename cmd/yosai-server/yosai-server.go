@@ -45,7 +45,7 @@ func main() {
 		portInt = 5432
 	}
 
-	connectionString := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", dbuser, dbpassword, dbhost, dbport, dbname)
+	connectionString := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", dbuser, dbpassword, dbhost, portInt, dbname)
 	fmt.Print(connectionString)
 	db, err := sql.Open("postgres", connectionString)
 	if err != nil {
