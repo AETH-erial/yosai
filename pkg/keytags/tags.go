@@ -28,7 +28,7 @@ func (c ConstKeytag) WgKeypairKeyname() string       { return WG_KEYPAIR_KEYNAME
 func (c ConstKeytag) SystemSshKeyname() string       { return SYSTEM_SSH_KEYNAME }
 func (c ConstKeytag) GetAnsibleKeys() []string {
 	return []string{
-
+		GIT_SSH_KEYNAME,
 		SYSTEM_SSH_KEYNAME,
 		VPS_ROOT_PASS_KEYNAME,
 		VPS_SUDO_USER_KEYNAME,
